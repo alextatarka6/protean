@@ -1,0 +1,5 @@
+poke-env>=0.15.0
+numpy
+
+[dev]
+pytest
