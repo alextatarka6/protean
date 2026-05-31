@@ -9,10 +9,12 @@ requires-python = ">=3.10"
 dependencies = [
     "poke-env>=0.15.0",
     "numpy",
+    "datasets>=2.0",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest"]
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["."]
+include = ["protean*"]
