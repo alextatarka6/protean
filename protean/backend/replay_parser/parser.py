@@ -285,6 +285,7 @@ def parse_battle(battle_id: str, log: str, format_id: str) -> Optional[ParsedBat
             pk.hp = hp
             pk.status = status
             pk.fainted = hp == 0.0
+            pk.seen_in_battle = True
 
             # Reset boosts on the previously active pokemon when it leaves
             if s.active is not None and s.active is not pk:
