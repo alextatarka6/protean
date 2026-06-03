@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+dist/
+build/
+
+# Dataset artifacts (large, built locally or pushed to HF)
+gen1ou_dataset/
+gen1ou_dataset_shard*/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Editors
+.DS_Store
+.idea/
+.vscode/

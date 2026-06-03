@@ -614,18 +614,22 @@ def parse_battle(battle_id: str, log: str, format_id: str) -> Optional[ParsedBat
     if not has_species_clause:
         return None
 
-    # Both teams must have revealed all 6 pokemon
-    if len(p1.team) != 6 or len(p2.team) != 6:
-        return None
+    # Team preview (players see each other's full roster before picking a lead) was
+    # introduced in Gen 5.  Gen 1–4 only reveal pokemon when they are sent into battle,
+    # so battles that end early will have fewer than 6 seen per side.  Team inference
+    # fills the unrevealed slots later; require only that at least 1 was seen per side.
+    has_team_preview = gen >= 5
+    if has_team_preview:
+        if len(p1.team) != 6 or len(p2.team) != 6:
+            return None
+    else:
+        if len(p1.team) == 0 or len(p2.team) == 0:
+            return None
 
-    # No duplicate species within either team
+    # No duplicate species within either team (species clause applies to own team)
     p1_species = [pk.species for pk in p1.team]
     p2_species = [pk.species for pk in p2.team]
     if len(p1_species) != len(set(p1_species)) or len(p2_species) != len(set(p2_species)):
-        return None
-
-    # No species appearing on both teams (forward-consistency sanity check)
-    if set(p1_species) & set(p2_species):
         return None
 
     return ParsedBattle(
