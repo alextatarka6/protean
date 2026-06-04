@@ -61,11 +61,45 @@ from tqdm import tqdm
 from protean.backend.replay_parser.parser import parse_battle
 from protean.backend.replay_parser.types import BattlePokemon, POVReplay
 from protean.backend.usage_stats import load_format_stats
+from protean.pokedex import _clean as _clean_name
 from protean.pov import reconstruct_both_povs
 
 FORMAT = "gen1ou"
 SOURCE_REPO = "jakegrigsby/metamon-raw-replays"
 GEN1OU_SHARDS = [35, 36]
+
+
+# ---------------------------------------------------------------------------
+# Gen1 species validator
+# ---------------------------------------------------------------------------
+
+def _build_gen1_species_set() -> frozenset[str]:
+    """Return cleaned names of all gen1 species (dex 1-151) from poke-env."""
+    from poke_env.data import GenData
+    gd = GenData.from_gen(1)
+    return frozenset(
+        _clean_name(name)
+        for name, data in gd.pokedex.items()
+        if 1 <= data.get("num", 0) <= 151
+    )
+
+
+# Built once at import time — cheap since poke-env caches the data.
+_GEN1_SPECIES: frozenset[str] = _build_gen1_species_set()
+
+
+def _battle_is_gen1_clean(battle) -> bool:
+    """
+    Return True only if every species that appeared in the battle is a gen1
+    Pokémon (dex 1-151).  Rejects mislabeled replays that contain gen2+ mons.
+    """
+    for turn in battle.turns:
+        for side in (turn.p1, turn.p2):
+            for pk in side.team:
+                if _clean_name(pk.species) not in _GEN1_SPECIES:
+                    return False
+    return True
+
 
 # ---------------------------------------------------------------------------
 # Worker-process state (loaded once per process via initializer)
@@ -85,6 +119,8 @@ def _process_row(args: tuple) -> list[dict]:
     rng = np.random.default_rng(seed)
     battle = parse_battle(row_id, log, formatid)
     if battle is None:
+        return []
+    if not _battle_is_gen1_clean(battle):
         return []
     p1_pov, p2_pov = reconstruct_both_povs(battle, format_stats=_worker_stats, rng=rng)
     result = []

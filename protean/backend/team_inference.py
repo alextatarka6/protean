@@ -106,7 +106,9 @@ def _infer_team_members(
             if stats is None:
                 continue
             for candidate, pct in stats.teammates.items():
-                if candidate not in all_known and float(pct) > 0:
+                if (candidate not in all_known
+                        and candidate in format_stats  # only infer species valid in this format
+                        and float(pct) > 0):
                     scores[candidate] = scores.get(candidate, 0.0) + float(pct)
 
         if not scores:
