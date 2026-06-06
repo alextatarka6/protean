@@ -74,9 +74,11 @@ def _most_revealed_my_side(battle: ParsedBattle, pov_player: str) -> SideState:
                 best[pk.species].fainted = False
             else:
                 existing = best[pk.species]
+                seen = {m.lower() for m in existing.revealed_moves}
                 for move in pk.revealed_moves:
-                    if move not in existing.revealed_moves:
+                    if move.lower() not in seen and len(existing.revealed_moves) < 4:
                         existing.revealed_moves.append(move)
+                        seen.add(move.lower())
                 if existing.item is None and pk.item is not None:
                     existing.item = pk.item
                 if existing.ability is None and pk.ability is not None:

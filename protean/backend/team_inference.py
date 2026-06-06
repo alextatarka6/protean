@@ -60,6 +60,7 @@ def _infer_pokemon(
     pk = copy.deepcopy(pk)
 
     # Fill move slots up to 4, excluding already-revealed moves
+    pk.revealed_moves = pk.revealed_moves[:4]  # guard against upstream overfill
     needed = 4 - len(pk.revealed_moves)
     if needed > 0 and stats.moves:
         sampled = _sample_weighted(

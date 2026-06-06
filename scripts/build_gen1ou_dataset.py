@@ -368,10 +368,14 @@ def main() -> None:
     print("Saved.")
 
     if args.repo:
+        from huggingface_hub import HfApi
         token = args.token or os.environ.get("HF_TOKEN")
         print(f"\nPushing to hub: {args.repo}  (private={not args.public})")
         final_ds.push_to_hub(args.repo, private=not args.public, token=token)
         print("Upload complete.")
+        print("Squashing repo history to drop orphaned LFS objects...")
+        HfApi().super_squash_history(repo_id=args.repo, repo_type="dataset", token=token)
+        print("Squash complete.")
     else:
         print(f"\nTo push later:\n"
               f"  python scripts/build_gen1ou_dataset.py "

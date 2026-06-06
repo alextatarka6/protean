@@ -11,6 +11,12 @@ build/
 gen1ou_dataset/
 gen1ou_dataset_shard*/
 
+# Model checkpoints (large binary files — store separately)
+checkpoints/
+
+# Showdown server logs
+server/pokemon-showdown/logs/
+
 # Jupyter
 .ipynb_checkpoints/
 

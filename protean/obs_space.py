@@ -499,6 +499,13 @@ class Gen1ActionSpace:
                 (p for p in my_team if p["species"] == my_active_species), None
             )
             moves = _sorted_moves(my_active_dict["revealed_moves"]) if my_active_dict else []
+            if len(moves) > N_MOVE_SLOTS:
+                import warnings
+                warnings.warn(
+                    f"{my_active_species!r} has {len(moves)} revealed_moves "
+                    f"{moves!r} — team_inference overfill; skipping turn"
+                )
+                return -1
             value_clean = _clean(value)
             for i, m in enumerate(moves):
                 if _clean(m) == value_clean:
@@ -510,6 +517,14 @@ class Gen1ActionSpace:
                 p for p in my_team
                 if p["species"] != my_active_species and not p["fainted"]
             ]
+            if len(alive_bench) > N_SWITCH_SLOTS:
+                import warnings
+                warnings.warn(
+                    f"alive_bench has {len(alive_bench)} entries "
+                    f"(active={my_active_species!r}, team={[p['species'] for p in my_team]!r}) "
+                    f"— likely a parser/inference duplicate; skipping turn"
+                )
+                return -1
             value_clean = _clean(value)
             for i, p in enumerate(alive_bench):
                 if _clean(p["species"]) == value_clean:

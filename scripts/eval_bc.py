@@ -9,14 +9,17 @@ Reports:
   - Per-action-slot confusion (optional --confusion flag)
 
 Usage:
-    python scripts/eval_bc.py --checkpoint checkpoints/bc_step0005000.pt
-    python scripts/eval_bc.py --checkpoint checkpoints/bc_final.pt --rows 5000
+    python scripts/eval_bc.py --checkpoint checkpoints/bc_final.pt                        # holdout (default)
+    python scripts/eval_bc.py --checkpoint checkpoints/bc_final.pt --rows 2000
     python scripts/eval_bc.py --checkpoint checkpoints/bc_final.pt --confusion
+    python scripts/eval_bc.py --checkpoint checkpoints/bc_final.pt --split train          # train rows only
+    python scripts/eval_bc.py --checkpoint checkpoints/bc_final.pt --split all            # full dataset
 """
 from __future__ import annotations
 
 import argparse
 import sys
+import zlib
 from pathlib import Path
 
 import numpy as np
@@ -31,6 +34,11 @@ from protean.tokenizer import get_tokenizer
 
 DATASET_REPO = "atatark2/protean-gen1ou"
 N_ACTIONS    = 9
+
+
+def _is_holdout(battle_id: str, holdout_pct: int = 10) -> bool:
+    """Deterministic train/holdout split via CRC32 of the battle_id."""
+    return zlib.crc32(battle_id.encode()) % 100 < holdout_pct
 
 
 def get_device() -> torch.device:
@@ -72,10 +80,14 @@ def evaluate(args: argparse.Namespace) -> None:
         for row in ds:
             if args.rows and rows_seen >= args.rows:
                 break
+            if args.split == "holdout" and not _is_holdout(row["battle_id"]):
+                continue
+            if args.split == "train" and _is_holdout(row["battle_id"]):
+                continue
 
             for t in range(row["num_turns"]):
                 action_idx = action_space.row_to_action_idx(row, t)
-                if action_idx == -1:
+                if not (0 <= action_idx < N_ACTIONS):
                     continue
 
                 obs  = obs_space.row_to_obs(row, t)
@@ -138,8 +150,10 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Evaluate a BC checkpoint")
     p.add_argument("--checkpoint", type=str, required=True,
                    help="Path to .pt checkpoint file")
+    p.add_argument("--split", type=str, default="holdout", choices=["holdout", "train", "all"],
+                   help="Which rows to evaluate: holdout (default), train, or all")
     p.add_argument("--rows", type=int, default=0,
-                   help="Number of dataset rows to evaluate (0 = full dataset)")
+                   help="Number of dataset rows to evaluate (0 = full split)")
     p.add_argument("--confusion", action="store_true",
                    help="Print 9×9 confusion matrix")
     return p.parse_args()
