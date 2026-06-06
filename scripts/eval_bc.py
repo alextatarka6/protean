@@ -98,7 +98,7 @@ def evaluate(args: argparse.Namespace) -> None:
                 numbers = torch.from_numpy(obs["numbers"]).float().unsqueeze(0).to(device)
                 amask   = torch.from_numpy(mask).bool().unsqueeze(0).to(device)
 
-                log_probs = model(tokens, numbers, amask)
+                log_probs, _ = model(tokens, numbers, amask)
                 pred = int(log_probs.argmax(dim=-1).item())
                 is_correct = (pred == action_idx)
 

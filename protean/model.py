@@ -1,5 +1,5 @@
 """
-Gen1OU behavioural cloning policy.
+Gen1OU policy network (BC pretraining + PPO fine-tuning).
 
 Architecture:
     text (71 tokens) → TokenEmbedding(vocab, 256) + PosEmbedding(128, 256)
@@ -8,11 +8,15 @@ Architecture:
                             ↓
     numbers (48)    → Linear(48→256) → ReLU [256]
                             ↓
-                     Concat [512] → MLP(512→256→256) → [256]
+                     Concat [512] → MLP(512→256→256) → state repr [256]
                             ↓
-                     Linear(256→9) → action logits
+              ┌─────────────────────────────┐
+              │ policy_head: Linear(256→9) │  → masked log-softmax → log-probs
+              │ value_head:  Linear(256→1) │  → scalar V(s) (for PPO)
+              └─────────────────────────────┘
 
-Call forward(tokens, numbers, action_mask) to get log-probabilities over 9 slots.
+forward() returns (log_probs, value).
+Value head operates on state.detach() — trunk trains only from policy gradient.
 """
 from __future__ import annotations
 
@@ -80,8 +84,11 @@ class Gen1OUPolicy(nn.Module):
             nn.ReLU(),
         )
 
-        # Action head
+        # Policy head
         self.action_head = nn.Linear(d_model, n_actions)
+
+        # Value head (for PPO) — operates on detached state repr
+        self.value_head = nn.Linear(d_model, 1)
 
         self._init_weights()
 
@@ -94,6 +101,11 @@ class Gen1OUPolicy(nn.Module):
                 nn.init.trunc_normal_(module.weight, std=0.02)
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
+        # Value head starts near zero so early updates don't explode.
+        # Returns can be ±100 (terminal reward); a random init creates huge
+        # MSE gradients on the first PPO update that can corrupt the policy trunk.
+        nn.init.zeros_(self.value_head.weight)
+        nn.init.zeros_(self.value_head.bias)
 
     def encode_text(self, tokens: torch.Tensor) -> torch.Tensor:
         """
@@ -118,24 +130,35 @@ class Gen1OUPolicy(nn.Module):
 
     def forward(
         self,
-        tokens:      torch.Tensor,          # (B, T)  int64
-        numbers:     torch.Tensor,          # (B, 48) float32
-        action_mask: torch.Tensor | None = None,  # (B, 9)  bool — True = valid
-    ) -> torch.Tensor:
+        tokens:      torch.Tensor,                 # (B, T)  int64
+        numbers:     torch.Tensor,                 # (B, 48) float32
+        action_mask: torch.Tensor | None = None,   # (B, 9)  bool — True = valid
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Returns log-probabilities over 9 action slots.
-        Invalid actions (mask=False) receive -inf before softmax.
+        Returns (log_probs, value).
+          log_probs: (B, 9)  — log-probabilities over action slots
+          value:     (B, 1)  — scalar state-value estimate V(s)
+
+        Invalid actions (mask=False) receive -1e9 before softmax (not -inf — see comment).
+        Value head uses state.detach() so value loss doesn't flow through the trunk.
         """
-        text_repr    = self.encode_text(tokens)            # (B, 256)
-        numbers_repr = self.numbers_proj(numbers)          # (B, 256)
+        text_repr    = self.encode_text(tokens)                             # (B, 256)
+        numbers_repr = self.numbers_proj(numbers)                           # (B, 256)
+        state        = self.mlp(torch.cat([text_repr, numbers_repr], dim=-1))  # (B, 256)
 
-        state = self.mlp(torch.cat([text_repr, numbers_repr], dim=-1))  # (B, 256)
-        logits = self.action_head(state)                   # (B, 9)
-
+        logits = self.action_head(state)                                    # (B, 9)
         if action_mask is not None:
-            logits = logits.masked_fill(~action_mask, float("-inf"))
+            # Use a large finite negative instead of -inf.
+            # In float32, exp(-1e9) underflows to 0 — identical softmax values to
+            # -inf for valid slots.  But -inf causes NaN in log_softmax backward on
+            # MPS (Apple Silicon GPU): the grad formula involves softmax_j * sum(grad)
+            # where softmax_j is denormalized near-zero, yielding 0*inf = nan.
+            logits = logits.masked_fill(~action_mask, -1e9)
+        log_probs = F.log_softmax(logits, dim=-1)
 
-        return F.log_softmax(logits, dim=-1)
+        value = self.value_head(state.detach())                             # (B, 1)
+
+        return log_probs, value
 
     @torch.no_grad()
     def act(
@@ -143,12 +166,44 @@ class Gen1OUPolicy(nn.Module):
         tokens:      torch.Tensor,
         numbers:     torch.Tensor,
         action_mask: torch.Tensor | None = None,
-    ) -> int:
-        """Greedy action for a single observation (no batch dim required)."""
+        sample:      bool = False,
+    ) -> tuple[int, float, float]:
+        """
+        Select an action for a single observation (no batch dim required).
+
+        Returns (action_idx, log_prob, value).
+        If sample=True, samples from the distribution; otherwise argmax (greedy).
+        """
         if tokens.dim() == 1:
             tokens  = tokens.unsqueeze(0)
             numbers = numbers.unsqueeze(0)
             if action_mask is not None:
                 action_mask = action_mask.unsqueeze(0)
-        log_probs = self.forward(tokens, numbers, action_mask)
-        return int(log_probs.argmax(dim=-1).item())
+
+        log_probs, value = self.forward(tokens, numbers, action_mask)
+
+        if sample:
+            probs = log_probs.exp().clamp(min=0.0)
+            # If weights have gone NaN (e.g. after a bad PPO update), fall back to
+            # a uniform distribution over valid actions so the battle can continue.
+            if not torch.isfinite(probs).all():
+                if action_mask is not None:
+                    probs = action_mask.float()
+                else:
+                    probs = torch.ones_like(probs)
+            probs = probs / probs.sum(dim=-1, keepdim=True).clamp(min=1e-8)
+            action = torch.multinomial(probs, num_samples=1).squeeze(-1)
+        else:
+            if not torch.isfinite(log_probs).all():
+                # Corrupt weights: fall back to first valid action
+                if action_mask is not None:
+                    action = action_mask[0].nonzero(as_tuple=False)[0, 0].unsqueeze(0)
+                else:
+                    action = torch.zeros(1, dtype=torch.long, device=log_probs.device)
+            else:
+                action = log_probs.argmax(dim=-1)
+
+        action_idx = int(action.item())
+        log_prob   = float(log_probs[0, action_idx].item())
+        val        = float(value[0, 0].item())
+        return action_idx, log_prob, val

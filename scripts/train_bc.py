@@ -223,7 +223,7 @@ def train(args: argparse.Namespace) -> None:
         # No mask during training — masking the target slot to -inf causes inf loss
         # when the parser's revealed-move state lags the action taken.
         # The mask is used only at inference time (model.act).
-        log_probs = model(tokens, nums, action_mask=None)   # (B, 9)
+        log_probs, _ = model(tokens, nums, action_mask=None)   # (B, 9)
         loss = F.nll_loss(log_probs, targets, weight=action_weights, reduction="mean")
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -233,7 +233,7 @@ def train(args: argparse.Namespace) -> None:
 
         # Metrics: accuracy uses masked logits (inference behaviour)
         with torch.no_grad():
-            masked_log_probs = model(tokens, nums, amasks)
+            masked_log_probs, _ = model(tokens, nums, amasks)
             preds   = masked_log_probs.argmax(dim=-1)
             correct = (preds == targets).sum().item()
 
