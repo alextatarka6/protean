@@ -11,8 +11,8 @@ Gen1OU Pokémon Showdown AI. Pipeline: raw replays → parsed dataset → state 
 | 1 — Replay parsing & dataset | ✅ Done |
 | 2 — State encoder | ✅ Done |
 | 3 — Model architecture + BC training | ✅ Done |
-| 4 — RL fine-tuning (PPO) | 🔄 Next |
-| 5 — Evaluation & live play | 📋 Planned |
+| 4 — RL fine-tuning (PPO) | ✅ Done |
+| 5 — Evaluation & live play | 🔄 Next |
 
 Full roadmap: `ROADMAP.md`
 
@@ -34,6 +34,8 @@ protean/
   tokenizer.py           # Gen1Tokenizer (459 tokens), get_tokenizer(), build_gen1ou_tokenizer()
   obs_space.py           # Gen1OUObservationSpace, Gen1ActionSpace
   model.py               # Gen1OUPolicy (3.52M params) — policy + value heads
+  rl_env.py              # poke-env bridge: Gen1OUPlayer, battle_to_obs, compute_reward
+  teams.py               # 4 gen1ou teambuilder strings + random_team() helper
   data/
     gen1ou_vocab.json    # Pre-built 459-token vocabulary
 
@@ -42,7 +44,7 @@ scripts/
   train_bc.py               # BC training loop (Phase 3 — complete)
   eval_bc.py                # BC evaluation: overall/move/switch accuracy + confusion matrix
   start_server.sh           # Start local Showdown server on port 8001
-  train_ppo.py              # (Phase 4 — to be created) PPO self-play training loop
+  train_ppo.py              # PPO self-play training loop (Phase 4 — complete)
 
 server/
   pokemon-showdown/         # Git submodule: smogon/pokemon-showdown
@@ -143,19 +145,29 @@ Key implementation notes:
 
 ---
 
-## RL Fine-tuning (Phase 4 — next)
+## RL Fine-tuning (Phase 4 — complete)
 
-### Design decisions
-- **Environment**: Local Showdown server (`server/pokemon-showdown/`, port 8001) via poke-env
-- **Self-play**: 4 parallel battles; opponent weights synced to learner every 50 episodes
-- **Critic**: Shared trunk, separate `value_head: Linear(256→1)`, gradient-stopped from trunk
-- **Reward** (dense, per turn + terminal):
+### Design
+- **Environment**: Local Showdown server (`server/pokemon-showdown/`, port 8001) via poke-env 0.8.3.3
+- **Self-play**: 4 parallel battle pairs; opponent weights synced to learner every 50 episodes
+- **Critic**: Shared trunk, separate `value_head: Linear(256→1)`, zero-init, gradient-stopped from trunk
+- **Reward** (dense, scaled to O(0.01)/turn so GAE returns stay in [-1.5, +1.5]):
   ```
-  1.0*(damage_dealt + hp_gained) + 0.5*(gave_status − took_status)
-  + 1.0*(KOs_dealt − KOs_taken) + 100.0*victory
+  0.01*(damage_dealt + hp_gained) + 0.005*(gave_status − took_status)
+  + 0.01*(KOs_dealt − KOs_taken) + 1.0*victory
   ```
-- **KL penalty**: `β=0.01 * KL(π_RL ‖ π_BC)` — frozen BC checkpoint as anchor to prevent catastrophic forgetting
-- **PPO hyperparameters**: clip ε=0.2, GAE γ=0.99 λ=0.95, 4 epochs/rollout, minibatch 256, lr=1e-4
+- **KL penalty**: `β=0.01 * KL(π_RL ‖ π_BC)` — frozen BC checkpoint as anchor
+- **PPO hyperparameters**: clip ε=0.2, GAE γ=0.99 λ=0.95, 4 epochs/rollout, minibatch 256, lr=1e-4, vf_coef=0.1
+
+### Key implementation gotchas (poke-env + MPS)
+- **All `Gen1OUPlayer` attrs must be set before `super().__init__()`** — poke-env starts the POKE_LOOP background thread partway through `Player.__init__`; any attribute not yet set when a battle message arrives raises `AttributeError`
+- **`threading.Lock` not `asyncio.Lock`** — `drain_buffer()` runs on the main thread; `choose_move` and `_battle_finished_callback` run on POKE_LOOP; they are on different event loops
+- **`-1e9` not `-inf` for action masking** — `log_softmax` backward on MPS produces NaN gradients through `-inf` inputs; `-1e9` underflows to 0 in float32 (identical forward behaviour) but has well-defined backward
+- **`ratio.clamp(max=10)` in PPO** — prevents `inf * 0 = nan` when a valid action collapses to near-zero probability
+- **Gradient norm guard** — `clip_grad_norm_` returns the pre-clip norm; if non-finite, skip `optimizer.step()` to avoid corrupting all weights
+- **`battle.available_moves` for turn-1 moves** — `active_pokemon.moves` is empty until a move is used; union with `available_moves` (always populated from server `|request|`) for correct slot mapping
+- **`to_id_str(None)` monkey-patch** — gen1 has no abilities; poke-env passes `None` to `to_id_str` which crashes iterating it; patched in `rl_env.py` before any poke-env Pokemon objects are created
+- **0.5s inter-iteration sleep** — gives POKE_LOOP time to finish server-side teardown before the next challenge is issued; prevents `|popup|You are already challenging someone` dropped challenges
 
 ### Server setup
 ```bash
@@ -166,14 +178,14 @@ Key implementation notes:
 ./scripts/start_server.sh &
 ```
 
-poke-env `ServerConfiguration`:
-```python
-from poke_env import ServerConfiguration
-LOCAL = ServerConfiguration(
-    websocket_url="ws://localhost:8001/showdown/websocket",
-    authentication_url="https://play.pokemonshowdown.com/action.php?"
-)
+### Training
+```bash
+python scripts/train_ppo.py --bc-checkpoint checkpoints/bc_final.pt
+# Resume from checkpoint:
+python scripts/train_ppo.py --bc-checkpoint checkpoints/bc_final.pt --resume checkpoints/ppo_ep0000500.pt
 ```
+
+Checkpoints saved every 500 episodes to `checkpoints/ppo_ep*.pt`. Final model: `checkpoints/ppo_final.pt`.
 
 ---
 

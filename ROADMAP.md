@@ -187,7 +187,7 @@ Cleared the >50% threshold for proceeding to RL fine-tuning.
 
 ---
 
-## Phase 4 — RL Fine-tuning (PPO) 🔄
+## Phase 4 — RL Fine-tuning (PPO) ✅
 
 ### 4.0 Server Setup ✅
 **`server/pokemon-showdown/`** (git submodule), **`scripts/start_server.sh`**
@@ -197,53 +197,69 @@ Local Pokémon Showdown server for self-play battles.
 - Port 8001 (avoids collision with any other local Showdown instance)
 - No login server auth — bots connect freely without passwords
 - No rated battles
-- poke-env 0.8.3.3 verified working: RandomPlayer self-play on `gen1randombattle` ✅
+- poke-env 0.8.3.3 verified working
 
 ```bash
 ./scripts/start_server.sh        # foreground
 ./scripts/start_server.sh &      # background
 ```
 
-### 4.1 RL Environment ✅ (to implement)
-**`protean/rl_env.py`**
+### 4.1 RL Environment ✅
+**`protean/rl_env.py`**, **`protean/teams.py`**
 
-poke-env wrapper that connects the live `Battle` object to our observation/action space.
+poke-env bridge connecting live `Battle` objects to our observation/action space.
 
-- `Gen1OUPlayer(Player)` — subclasses poke-env's `Player`, overrides `choose_move`
-- `battle_to_obs(battle, inferred_team, format_stats)` — bridges poke-env's `Battle` → our obs format
-  - Own team: all moves known (real game), no inference needed
-  - Opponent unseen slots: live usage-stats inference (same logic as dataset builder)
-- `compute_reward(prev_state, curr_state, done, won)` → float
-- Action mask from `battle.available_moves` + `battle.available_switches` + `battle.force_switch`
+- `Gen1OUPlayer(Player)` — subclasses poke-env's `Player`, overrides `choose_move`; collects `Transition` objects into a thread-safe buffer drained by the PPO loop
+- `battle_to_obs(battle, prev_my_move, prev_opp_move)` — bridges poke-env `Battle` → our obs format; unions `active_pokemon.moves` with `available_moves` so action mask is correct on turn 1
+- `battle_to_action_mask(battle)` — 9-slot bool mask; alphabetical move slots, sequential switch slots
+- `action_idx_to_order(idx, battle)` — decodes policy slot → poke-env `BattleOrder`
+- `compute_reward(prev, curr, won)` — dense shaped reward scaled to O(0.01)/turn so GAE returns stay in [-1.5, +1.5]
+- `teams.py` — 4 gen1ou teams (standard, offensive, balanced, stall); `random_team()` helper
 
-### 4.2 PPO Training (to implement)
+**Reward function:**
+```
+reward = 0.01 * (damage_dealt + hp_gained)
+       + 0.005 * (gave_status − took_status)
+       + 0.01  * (KOs_dealt − KOs_taken)
+       + 1.0   * victory   # terminal only; ±1 (not ±100, to keep vf_loss O(1))
+```
+
+**Key poke-env gotchas encountered:**
+- All instance attrs must be set before `super().__init__()` — POKE_LOOP background thread starts mid-`Player.__init__`
+- `threading.Lock` (not `asyncio.Lock`) to guard shared buffer across main thread and POKE_LOOP
+- `to_id_str(None)` monkey-patched at module import — gen1 has no abilities; poke-env passes `None` to `to_id_str`
+- 0.5s sleep between `asyncio.run()` calls — lets server-side teardown complete before next challenge
+
+### 4.2 PPO Training ✅
 **`scripts/train_ppo.py`**
 
 Self-play PPO fine-tuning initialised from the BC checkpoint.
 
+```bash
+python scripts/train_ppo.py --bc-checkpoint checkpoints/bc_final.pt
+python scripts/train_ppo.py --bc-checkpoint checkpoints/bc_final.pt \
+    --resume checkpoints/ppo_ep0000500.pt
+```
+
 **Self-play setup:**
-- 4 learner instances + 4 opponent instances, all sharing the live model weights
-- Opponent weights synced to learner every 50 episodes (lag stabilizes training)
-- Rollout buffer: 1024 steps accumulated across all agents before each update
+- 4 learner + 4 opponent players, each pair on a different team rotation
+- Opponent weights synced to learner every 50 episodes
+- Rollout buffer: 1024 steps before each PPO update
 
 **PPO hyperparameters:**
-- GAE: γ=0.99, λ=0.95
-- Clip ε=0.2
-- 4 epochs per rollout, minibatch 256
-- AdamW lr=1e-4
+- GAE: γ=0.99, λ=0.95; clip ε=0.2; 4 epochs/rollout; minibatch 256
+- AdamW lr=1e-4, weight_decay=1e-2; grad clip 1.0; vf_coef=0.1
+- `ratio.clamp(max=10)` — prevents `inf * 0 = nan` in policy gradient
+- Gradient norm guard — skips `optimizer.step()` if norm is non-finite
 
 **KL regularization:**
-- `β * KL(π_RL ‖ π_BC)` added to PPO loss, β=0.01
-- Frozen BC checkpoint used as reference anchor
-- Prevents catastrophic forgetting of BC knowledge during early RL
+- `β=0.01 * KL(π_RL ‖ π_BC)` added to PPO loss
+- Frozen BC checkpoint as reference; prevents catastrophic forgetting
 
-**Reward function** (dense per-turn + terminal):
-```
-reward = 1.0 * (damage_dealt + hp_gained)
-       + 0.5 * (gave_status − took_status)
-       + 1.0 * (KOs_dealt − KOs_taken)
-       + 100.0 * victory   # +100 win, −100 loss (terminal only)
-```
+**MPS-specific fix:**
+- Action mask uses `-1e9` fill (not `-inf`) — `log_softmax` backward through `-inf` produces NaN gradients on Apple Silicon GPU; `-1e9` underflows to 0 in float32 (identical forward, stable backward)
+
+**Checkpoints:** saved every 500 episodes to `checkpoints/ppo_ep*.pt`. Final: `checkpoints/ppo_final.pt`
 
 ### 4.3 Success Criteria
 - Win rate vs. random agent: >90%
@@ -252,7 +268,7 @@ reward = 1.0 * (damage_dealt + hp_gained)
 
 ---
 
-## Phase 5 — Evaluation & Deployment 📋
+## Phase 5 — Evaluation & Deployment 🔄
 
 ### 5.1 Evaluation
 - Win rate vs. random agent
