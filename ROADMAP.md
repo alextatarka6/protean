@@ -34,6 +34,7 @@ Converts a spectator-view `ParsedBattle` into two first-person `POVReplay` objec
 - Fills unrevealed moves/items/abilities using Smogon usage statistics (`MovesetStats`)
 - Infers full opposing team when not all 6 Pokémon were revealed, using teammate co-occurrence sampling
 - Produces `POVSnapshot` per turn: what the player actually knew at decision time
+- Bug fixed: case-sensitive move dedup in `_most_revealed_my_side` caused >4 moves to accumulate; now normalised to lowercase
 
 ### 1.3 Usage Stats ✅
 **`protean/backend/usage_stats.py`**
@@ -54,6 +55,7 @@ Builds the final HuggingFace dataset from raw replays.
 - Both POVs per battle (following metamon paper design)
 - No rating filter (all skill levels included)
 - Per-sequence rows: each row is one full battle from one player's POV
+- `super_squash_history` called after each HF push to prevent LFS history bloat
 
 **Dataset schema** (each row = one POV trajectory):
 | Column | Type | Description |
@@ -78,11 +80,11 @@ Builds the final HuggingFace dataset from raw replays.
 | `my_action_value` | list[str] | Move name or species switched to |
 | `my_action_forced` | list[bool] | True for post-faint forced switches |
 
-**Published dataset**: `atatark2/protean-gen1ou` on HuggingFace Hub
+**Published dataset**: `atatark2/protean-gen1ou` on HuggingFace Hub (~194,715 rows)
 
 ---
 
-## Phase 2 — Encoding: State → Tensors 🔄
+## Phase 2 — Encoding: State → Tensors ✅
 
 Convert raw game state into model-ready tensor observations.
 
@@ -99,11 +101,9 @@ Static lookup of gen1 base stats for all Pokémon species.
 
 Simple vocabulary mapping: `word → integer index`. Built from gen1ou data only.
 
-- 481-token vocab: gen1 species, move names, types, status conditions, special structural tokens
+- 459-token vocab: gen1 species, move names, types, status conditions, special structural tokens
 - Much smaller than metamon's (no items, abilities, tera types, gen5-9 content)
 - Same interface as metamon's `PokemonTokenizer`
-- Includes a one-time patch for 22 non-gen1 tokens present in the existing published dataset
-  due to mislabeled source replays; these will be removed when the dataset is rebuilt
 
 ### 2.3 Observation & Action Space ✅
 **`protean/obs_space.py`**
@@ -124,74 +124,131 @@ Converts game state at a single timestep into model inputs.
   - HP%, base stats, boosts for opponent's active Pokémon
 
 **`Gen1ActionSpace`** — fixed 9-slot output:
-- Slots 0–3: use move 1–4
+- Slots 0–3: use move 1–4 (alphabetical order)
 - Slots 4–8: switch to benched Pokémon 1–5
-- Invalid actions masked at inference time
-
-**Single interface** — accepts either:
-- `POVSnapshot` (live play via poke-env)
-- Dataset row + turn index (offline training from HF dataset)
+- Invalid actions masked at inference time; `row_to_action_idx` returns -1 for unmappable actions
 
 ---
 
-## Dataset Rebuild ✅
+## Phase 3 — Model Architecture + BC Training ✅
 
-Before Phase 3, rebuild `atatark2/protean-gen1ou` with two bug fixes applied:
+### 3.1 Model Architecture ✅
+**`protean/model.py`** — `Gen1OUPolicy`, 3.52M parameters
 
-1. **Team inference fix** (`protean/backend/team_inference.py`) — candidates are now
-   filtered to only species present in `format_stats`, preventing non-gen1 Pokémon
-   from being inferred as teammates.
-2. **Source replay filter** (to add in `scripts/build_gen1ou_dataset.py`) — reject
-   any parsed battle where an active Pokémon species is not in the gen1ou usage stats
-   pool, removing mislabeled replays from the source data.
-
-Completed. Patch tokens removed from `tokenizer.py`; vocab is now a clean 458-token
-pure gen1ou set.
-
----
-
-## Phase 3 — Model: Architecture 📋
-
-The neural network that maps observations to action probabilities.
-
-### 3.1 Text Encoder
-Transformer that embeds the token sequence into a context vector.
-Uses the gen1 tokenizer vocab as its embedding table.
-
-### 3.2 Numerical Encoder
-Small MLP that processes the 48-dim numbers vector.
-
-### 3.3 Policy Head
-Fuses text + numerical embeddings → 9-dim action logits.
-Masked softmax over valid actions.
-
-### 3.4 Value Head (for RL)
-Additional output head → scalar state value estimate. Used during PPO fine-tuning.
-
----
-
-## Phase 4 — Training 📋
-
-### 4.1 Behavioural Cloning (BC) Pretraining
-Supervised training on the `atatark2/protean-gen1ou` dataset.
-- Loss: cross-entropy on `my_action_kind` + `my_action_value`
-- Reward shaping not needed — pure imitation of human play
-- Teaches the model what good Pokémon play looks like
-
-### 4.2 Reward Function
-Per-turn shaped reward, matching metamon's `DefaultShapedReward`:
 ```
-reward = 1.0 * (damage_done + hp_gain)
-       + 0.5 * (gave_status - took_status)
-       + 1.0 * (removed_pokemon - lost_pokemon)
-       + 100.0 * victory  # +100 win, -100 loss
+text (71 tokens) → TokenEmbedding(459, 256) + PosEmbedding(128, 256)
+               → Transformer(layers=4, d_model=256, nhead=8, ffn_dim=1024)
+               → CLS token [256]
+                      ↓
+numbers (48)   → Linear(48→256) → ReLU [256]
+                      ↓
+               Concat [512] → MLP(512→256→256) → state repr [256]
+                      ↓
+         ┌─────────────────────────────┐
+         │ policy_head: Linear(256→9) │   → masked log-softmax → action log-probs
+         │ value_head:  Linear(256→1) │   → scalar V(s) estimate (for PPO)
+         └─────────────────────────────┘
 ```
-Fully computable from stored dataset columns at training time.
 
-### 4.3 RL Fine-tuning (PPO)
-Self-play or vs. random/heuristic opponents via poke-env.
-- Initialise from BC-pretrained weights
-- Fine-tune with Proximal Policy Optimisation
+- Pre-norm transformer (LayerNorm before attention/FFN)
+- CLS token prepended to sequence; its output used as the text representation
+- Value head computed on `state.detach()` — trunk trains only from policy gradient
+
+### 3.2 BC Training ✅
+**`scripts/train_bc.py`**
+
+Behavioural cloning on `atatark2/protean-gen1ou`, streamed from HuggingFace.
+
+- Loss: `F.nll_loss` on 9-slot action, **no action mask during training** (masking the target slot to −∞ causes inf loss when parser-revealed move state lags the action taken; mask used only at inference)
+- Class weights: `moves=1.0, switches=2.0` — offsets the ~3:1 move/switch imbalance in the dataset
+- Holdout split: deterministic 10% via `zlib.crc32(battle_id.encode()) % 100 < 10`
+- Optimizer: AdamW lr=3e-4, betas=(0.9, 0.95), weight_decay=1e-2
+- Schedule: CosineAnnealingLR + 2k-step linear warmup
+- Grad clip: 1.0; batch size: 256; shuffle buffer: 10k samples
+
+### 3.3 BC Evaluation ✅
+**`scripts/eval_bc.py`**
+
+Evaluates a checkpoint on holdout/train/all splits.
+
+```
+python scripts/eval_bc.py --checkpoint checkpoints/bc_final.pt --confusion
+```
+
+**Final results** (`bc_final.pt`, 50k steps, switch_weight=2.0, holdout set):
+
+| Metric | Accuracy |
+|--------|----------|
+| Overall | **57.1%** |
+| Move (slots 0–3) | **60.3%** |
+| Switch (slots 4–8) | **47.1%** |
+
+Cleared the >50% threshold for proceeding to RL fine-tuning.
+
+---
+
+## Phase 4 — RL Fine-tuning (PPO) 🔄
+
+### 4.0 Server Setup ✅
+**`server/pokemon-showdown/`** (git submodule), **`scripts/start_server.sh`**
+
+Local Pokémon Showdown server for self-play battles.
+
+- Port 8001 (avoids collision with any other local Showdown instance)
+- No login server auth — bots connect freely without passwords
+- No rated battles
+- poke-env 0.8.3.3 verified working: RandomPlayer self-play on `gen1randombattle` ✅
+
+```bash
+./scripts/start_server.sh        # foreground
+./scripts/start_server.sh &      # background
+```
+
+### 4.1 RL Environment ✅ (to implement)
+**`protean/rl_env.py`**
+
+poke-env wrapper that connects the live `Battle` object to our observation/action space.
+
+- `Gen1OUPlayer(Player)` — subclasses poke-env's `Player`, overrides `choose_move`
+- `battle_to_obs(battle, inferred_team, format_stats)` — bridges poke-env's `Battle` → our obs format
+  - Own team: all moves known (real game), no inference needed
+  - Opponent unseen slots: live usage-stats inference (same logic as dataset builder)
+- `compute_reward(prev_state, curr_state, done, won)` → float
+- Action mask from `battle.available_moves` + `battle.available_switches` + `battle.force_switch`
+
+### 4.2 PPO Training (to implement)
+**`scripts/train_ppo.py`**
+
+Self-play PPO fine-tuning initialised from the BC checkpoint.
+
+**Self-play setup:**
+- 4 learner instances + 4 opponent instances, all sharing the live model weights
+- Opponent weights synced to learner every 50 episodes (lag stabilizes training)
+- Rollout buffer: 1024 steps accumulated across all agents before each update
+
+**PPO hyperparameters:**
+- GAE: γ=0.99, λ=0.95
+- Clip ε=0.2
+- 4 epochs per rollout, minibatch 256
+- AdamW lr=1e-4
+
+**KL regularization:**
+- `β * KL(π_RL ‖ π_BC)` added to PPO loss, β=0.01
+- Frozen BC checkpoint used as reference anchor
+- Prevents catastrophic forgetting of BC knowledge during early RL
+
+**Reward function** (dense per-turn + terminal):
+```
+reward = 1.0 * (damage_dealt + hp_gained)
+       + 0.5 * (gave_status − took_status)
+       + 1.0 * (KOs_dealt − KOs_taken)
+       + 100.0 * victory   # +100 win, −100 loss (terminal only)
+```
+
+### 4.3 Success Criteria
+- Win rate vs. random agent: >90%
+- Win rate vs. frozen BC policy: >60%
+- No catastrophic forgetting: move accuracy in self-play stays >50%
 
 ---
 

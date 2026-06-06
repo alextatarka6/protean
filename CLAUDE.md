@@ -10,8 +10,8 @@ Gen1OU Pokémon Showdown AI. Pipeline: raw replays → parsed dataset → state 
 |-------|--------|
 | 1 — Replay parsing & dataset | ✅ Done |
 | 2 — State encoder | ✅ Done |
-| 3 — Model architecture + BC training | 🔄 Next |
-| 4 — RL fine-tuning (PPO) | 📋 Planned |
+| 3 — Model architecture + BC training | ✅ Done |
+| 4 — RL fine-tuning (PPO) | 🔄 Next |
 | 5 — Evaluation & live play | 📋 Planned |
 
 Full roadmap: `ROADMAP.md`
@@ -33,12 +33,20 @@ protean/
   pokedex.py             # get_base_stats(species), get_types(species), get_move_data(move)
   tokenizer.py           # Gen1Tokenizer (459 tokens), get_tokenizer(), build_gen1ou_tokenizer()
   obs_space.py           # Gen1OUObservationSpace, Gen1ActionSpace
+  model.py               # Gen1OUPolicy (3.52M params) — policy + value heads
   data/
     gen1ou_vocab.json    # Pre-built 459-token vocabulary
 
 scripts/
   build_gen1ou_dataset.py   # Builds HF dataset from raw replays
-  train_bc.py               # (Phase 3 — to be created) BC training loop
+  train_bc.py               # BC training loop (Phase 3 — complete)
+  eval_bc.py                # BC evaluation: overall/move/switch accuracy + confusion matrix
+  start_server.sh           # Start local Showdown server on port 8001
+  train_ppo.py              # (Phase 4 — to be created) PPO self-play training loop
+
+server/
+  pokemon-showdown/         # Git submodule: smogon/pokemon-showdown
+    config/config.js        # Local config: port 8001, no auth, no rated battles
 ```
 
 ---
@@ -99,7 +107,7 @@ Note: Gen1 has no items or abilities. SpA = SpD = "Special" stat (spc). All Pok�
 
 ---
 
-## Model (Phase 3 — to implement)
+## Model (Phase 3 — complete)
 
 **Architecture**: `Gen1OUPolicy` in `protean/model.py`
 
@@ -112,17 +120,60 @@ numbers (48)   → Linear(48→256) → ReLU [256]
                       ↓
                Concat [512] → MLP(512→256→256) → state repr [256]
                       ↓
-               Linear(256→9) → masked softmax → action logits
+         ┌─────────────────────────────┐
+         │ policy_head: Linear(256→9) │   → masked log-softmax → action log-probs
+         │ value_head:  Linear(256→1) │   → scalar V(s) estimate (for PPO)
+         └─────────────────────────────┘
 ```
 
-~12M parameters. Runs on MPS (Apple Silicon GPU).
+**3.52M parameters.** Runs on MPS (Apple Silicon GPU).
 
-**Training**: `scripts/train_bc.py`
-- Dataset: `atatark2/protean-gen1ou` streamed from HF
-- Loss: masked cross-entropy on 9-slot action (invalid actions → −∞ before softmax)
-- Optimizer: AdamW + cosine LR schedule
-- Checkpoints saved to `checkpoints/`
-- Switch to RL (Phase 4) once BC validation accuracy > ~50%
+Key implementation notes:
+- `forward(tokens, numbers, action_mask=None)` → `(log_probs, value)`
+- Action mask applied only at inference time (not during BC loss computation — avoids inf loss when parser state lags action)
+- Value head computed on `state.detach()` — trunk trains from policy gradient only
+
+**BC Training results** (`checkpoints/bc_final.pt`, 50k steps, switch_weight=2.0):
+- Overall holdout accuracy: **57.1%**
+- Move accuracy: **60.3%** (slots 0–3)
+- Switch accuracy: **47.1%** (slots 4–8)
+- Optimizer: AdamW lr=3e-4, cosine decay, 2k warmup steps
+- Class weights: moves=1.0, switches=2.0 (offsets ~3:1 imbalance)
+- Holdout split: deterministic 10% via CRC32 hash of `battle_id`
+
+---
+
+## RL Fine-tuning (Phase 4 — next)
+
+### Design decisions
+- **Environment**: Local Showdown server (`server/pokemon-showdown/`, port 8001) via poke-env
+- **Self-play**: 4 parallel battles; opponent weights synced to learner every 50 episodes
+- **Critic**: Shared trunk, separate `value_head: Linear(256→1)`, gradient-stopped from trunk
+- **Reward** (dense, per turn + terminal):
+  ```
+  1.0*(damage_dealt + hp_gained) + 0.5*(gave_status − took_status)
+  + 1.0*(KOs_dealt − KOs_taken) + 100.0*victory
+  ```
+- **KL penalty**: `β=0.01 * KL(π_RL ‖ π_BC)` — frozen BC checkpoint as anchor to prevent catastrophic forgetting
+- **PPO hyperparameters**: clip ε=0.2, GAE γ=0.99 λ=0.95, 4 epochs/rollout, minibatch 256, lr=1e-4
+
+### Server setup
+```bash
+# Start local Showdown server (port 8001):
+./scripts/start_server.sh
+
+# Or in background:
+./scripts/start_server.sh &
+```
+
+poke-env `ServerConfiguration`:
+```python
+from poke_env import ServerConfiguration
+LOCAL = ServerConfiguration(
+    websocket_url="ws://localhost:8001/showdown/websocket",
+    authentication_url="https://play.pokemonshowdown.com/action.php?"
+)
+```
 
 ---
 
@@ -134,7 +185,8 @@ numbers (48)   → Linear(48→256) → ReLU [256]
 - **Observations computed at training time** — dataset stores raw state; `row_to_obs` called in the training loop
 - **Move ordering** — alphabetical within active Pokémon's moveset (consistent across turns)
 - **Gen1 specifics** — no items, no abilities, no weather, SpA=SpD=Special stat
-- **Reward** (Phase 4): `1.0*(damage_done+hp_gain) + 0.5*(gave_status−took_status) + 1.0*(removed−lost) + 100.0*victory`
+- **BC loss** — no action mask during training (mask only at inference); prevents inf loss when parser-revealed move state lags the action taken
+- **Holdout split** — deterministic 10% via `zlib.crc32(battle_id.encode()) % 100 < 10`
 
 ---
 
@@ -142,7 +194,10 @@ numbers (48)   → Linear(48→256) → ReLU [256]
 
 - `ROADMAP.md` — full phase-by-phase roadmap with completion status
 - `scripts/build_gen1ou_dataset.py` — dataset pipeline (run to rebuild)
-- `.gitignore` — excludes `gen1ou_dataset*/`, `.venv/`, `__pycache__/`
+- `scripts/train_bc.py` — BC training (Phase 3, complete)
+- `scripts/eval_bc.py` — BC evaluation script
+- `scripts/start_server.sh` — start local Showdown server on port 8001
+- `.gitignore` — excludes `gen1ou_dataset*/`, `.venv/`, `__pycache__/`, `checkpoints/`
 
 ---
 
