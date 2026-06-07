@@ -295,9 +295,14 @@ def train(args: argparse.Namespace) -> None:
 
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Create player instances — each pair gets a randomly assigned team
-    n_envs = args.n_envs
-    n_teams = len(ALL_TEAMS)
+    # Create player instances — each pair gets a rotating team assignment.
+    # A fraction (--bc-opponent-frac) of opponent slots use the frozen BC model
+    # to preserve diverse, generalizable training signal and anchor the policy
+    # to human-quality play.  The rest use the lagged self-play opponent.
+    n_envs    = args.n_envs
+    n_teams   = len(ALL_TEAMS)
+    n_bc_opps = max(0, round(n_envs * args.bc_opponent_frac))
+
     learners = [
         Gen1OUPlayer(
             model=learner_model,
@@ -310,11 +315,12 @@ def train(args: argparse.Namespace) -> None:
     ]
     opponents = [
         Gen1OUPlayer(
-            model=opponent_model,
+            # First n_bc_opps slots use frozen BC; remainder use lagged self-play.
+            model=bc_model if i < n_bc_opps else opponent_model,
             device=device,
             sample=True,
             username=f"Protean_O{i}",
-            team=ALL_TEAMS[(i + 1) % n_teams],   # offset so L and O use different teams
+            team=ALL_TEAMS[(i + 1) % n_teams],
         )
         for i in range(n_envs)
     ]
@@ -323,9 +329,10 @@ def train(args: argparse.Namespace) -> None:
     total_steps    = 0
     rollout_buf: list[Transition] = []
 
-    print(f"\nStarting PPO self-play | {n_envs} envs | rollout {args.rollout_steps} steps")
+    print(f"\nStarting PPO training | {n_envs} envs | rollout {args.rollout_steps} steps")
+    print(f"  Opponents: {n_bc_opps} frozen BC + {n_envs - n_bc_opps} self-play")
     print(f"  KL β={args.kl_beta}  clip ε={args.clip_eps}  lr={args.lr}")
-    print(f"  Opponent sync every {args.opponent_sync_interval} episodes\n")
+    print(f"  Self-play opponent sync every {args.opponent_sync_interval} episodes\n")
 
     t0 = time.time()
 
@@ -446,11 +453,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--gae-lambda",     type=float, default=0.95)
     p.add_argument("--vf-coef",        type=float, default=0.1,
                    help="Value function loss coefficient (lower = less value-head influence early)")
-    p.add_argument("--kl-beta",        type=float, default=0.01,
-                   help="KL penalty weight vs frozen BC policy")
+    p.add_argument("--kl-beta",          type=float, default=0.1,
+                   help="KL penalty weight vs frozen BC policy (default: 0.1; was 0.01)")
+    p.add_argument("--bc-opponent-frac", type=float, default=0.5,
+                   help="Fraction of opponent slots using frozen BC (default: 0.5)")
     p.add_argument("--lr",             type=float, default=1e-4)
     p.add_argument("--opponent-sync-interval", type=int, default=50,
-                   help="Sync opponent weights to learner every N episodes")
+                   help="Sync self-play opponent weights to learner every N episodes")
     p.add_argument("--checkpoint-interval",    type=int, default=500)
     return p.parse_args()
 

@@ -318,14 +318,17 @@ def compute_reward(
 ) -> float:
     """
     Dense shaped reward.  All values are scaled to O(0.01) per turn so that
-    discounted returns stay within roughly [-1.5, +1.5].  Large terminal
-    rewards (±100) were causing vf_loss > 1000 and gradient explosion.
+    discounted returns stay within roughly [-1.5, +1.5].
 
-    Scaled spec:
+    Spec:
+        -0.001                          (per-step cost — discourages stalling)
         0.01 * (damage_dealt + hp_gained)
       + 0.005 * (gave_status - took_status)
       + 0.01  * (KOs_dealt - KOs_taken)
       + 1.0   * victory   (terminal, undiscounted)
+
+    The turn penalty sums to -0.1 over a 100-turn game (small vs ±1 terminal),
+    but to -1.0 over a 1000-turn stall — strong enough to deter looping play.
     """
     hp_dealt    = prev.opp_hp_total - curr.opp_hp_total  # positive = good
     hp_gained   = curr.my_hp_total  - prev.my_hp_total   # positive = good (healing)
@@ -334,7 +337,8 @@ def compute_reward(
     kos_dealt   = curr.opp_fainted  - prev.opp_fainted
     kos_taken   = curr.my_fainted   - prev.my_fainted
 
-    r = (0.01 * (hp_dealt + hp_gained)
+    r = (-0.001                                           # per-step stall penalty
+       + 0.01 * (hp_dealt + hp_gained)
        + 0.005 * (gave_status - took_status)
        + 0.01  * (kos_dealt  - kos_taken))
 
