@@ -275,14 +275,10 @@ def train(args: argparse.Namespace) -> None:
         p.requires_grad_(False)
     bc_model.eval()
 
-    # Opponent model (lagged copy of learner)
-    opponent_model = Gen1OUPolicy(vocab_size=tokenizer.vocab_size).to(device)
-    sync_opponent(learner_model, opponent_model)
-    opponent_model.eval()
-
     optimizer = AdamW(learner_model.parameters(), lr=args.lr, weight_decay=1e-2)
 
-    # Resume PPO checkpoint if provided
+    # Resume PPO checkpoint if provided — must happen before opponent sync so
+    # the opponent starts from the resumed weights, not the BC weights.
     start_episode = 0
     if args.resume:
         ppo_ckpt = torch.load(args.resume, map_location=device)
@@ -290,6 +286,12 @@ def train(args: argparse.Namespace) -> None:
         optimizer.load_state_dict(ppo_ckpt["optimizer"])
         start_episode = ppo_ckpt.get("episode", 0)
         print(f"Resumed from PPO episode {start_episode}")
+
+    # Opponent model (lagged copy of learner) — sync after resume so it starts
+    # from the correct weights (PPO if resuming, BC if starting fresh).
+    opponent_model = Gen1OUPolicy(vocab_size=tokenizer.vocab_size).to(device)
+    sync_opponent(learner_model, opponent_model)
+    opponent_model.eval()
 
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 
