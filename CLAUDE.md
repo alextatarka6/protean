@@ -153,9 +153,12 @@ Key implementation notes:
 - **Critic**: Shared trunk, separate `value_head: Linear(256→1)`, zero-init, gradient-stopped from trunk
 - **Reward** (dense, scaled to O(0.01)/turn so GAE returns stay in [-1.5, +1.5]):
   ```
-  0.01*(damage_dealt + hp_gained) + 0.005*(gave_status − took_status)
+  -0.002 (per-step) + 0.01*damage_dealt + 0.005*(gave_status − took_status)
   + 0.01*(KOs_dealt − KOs_taken) + 1.0*victory
   ```
+  Note: `hp_gained` (healing) was removed — it made recovery-spam net-positive,
+  causing 1000-turn stall loops. Step penalty bumped -0.001 → -0.002 so a
+  1000-turn draw (-2.0) is decisively worse than losing (-1.0).
 - **KL penalty**: `β=0.01 * KL(π_RL ‖ π_BC)` — frozen BC checkpoint as anchor
 - **PPO hyperparameters**: clip ε=0.2, GAE γ=0.99 λ=0.95, 4 epochs/rollout, minibatch 256, lr=1e-4, vf_coef=0.1
 

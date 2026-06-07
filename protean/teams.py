@@ -176,11 +176,13 @@ Snorlax
 # Public API
 # ---------------------------------------------------------------------------
 
+# TEAM_STALL excluded from training rotation: triple-recovery moveset makes
+# hp_gained reward (now removed) and stalling incentives too strong.  Keep it
+# accessible via get_team("stall") for eval purposes.
 ALL_TEAMS: list[str] = [
     TEAM_STANDARD,
     TEAM_OFFENSIVE,
     TEAM_BALANCED,
-    TEAM_STALL,
 ]
 
 

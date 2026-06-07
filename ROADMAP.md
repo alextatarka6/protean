@@ -218,11 +218,18 @@ poke-env bridge connecting live `Battle` objects to our observation/action space
 
 **Reward function:**
 ```
-reward = 0.01 * (damage_dealt + hp_gained)
+reward = -0.002                           # per-step cost (bumped from -0.001)
+       + 0.01 * damage_dealt             # offense only; hp_gained removed (see below)
        + 0.005 * (gave_status − took_status)
        + 0.01  * (KOs_dealt − KOs_taken)
        + 1.0   * victory   # terminal only; ±1 (not ±100, to keep vf_loss O(1))
 ```
+`hp_gained` (healing reward) was removed: with recovery Pokémon (Soft-Boiled,
+Recover), each heal netted ~+0.005/turn vs the old -0.001 step penalty, making
+recovery-spam the locally optimal policy and producing 1000-turn stall games.
+Step penalty doubled so a 1000-turn draw (-2.0) beats losing (-1.0) decisively.
+`TEAM_STALL` removed from the training rotation (still accessible for eval via
+`get_team("stall")`) for the same reason — triple recovery moves amplify the issue.
 
 **Key poke-env gotchas encountered:**
 - All instance attrs must be set before `super().__init__()` — POKE_LOOP background thread starts mid-`Player.__init__`
