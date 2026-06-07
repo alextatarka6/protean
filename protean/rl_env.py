@@ -317,28 +317,36 @@ def compute_reward(
     won:  Optional[bool],   # None if battle not yet finished
 ) -> float:
     """
-    Dense shaped reward.  All values are scaled to O(0.01) per turn so that
-    discounted returns stay within roughly [-1.5, +1.5].
+    Dense shaped reward faithful to the metamon paper (Appendix E.1).
+    All shaping terms are scaled to O(0.01)/turn so GAE returns stay in [-1.5, +1.5].
 
     Spec:
         -0.002                          (per-step cost — discourages stalling)
-        0.01 * damage_dealt             (offense only; hp_gained removed to stop
-                                         recovery-spam being net-positive reward)
-      + 0.005 * (gave_status - took_status)
-      + 0.01  * (KOs_dealt - KOs_taken)
+        0.01 * net_hp                   (net HP differential: Δmy_hp − Δopp_hp)
+      + 0.005 * (gave_status − took_status)
+      + 0.01  * (KOs_dealt − KOs_taken)
       + 1.0   * victory   (terminal, undiscounted)
+
+    net_hp = hp_dealt + hp_gained = (prev.opp − curr.opp) + (curr.my − prev.my)
+           = Δmy_hp − Δopp_hp  — mirrors metamon's r_hp term.
+
+    Key property: in a stall mirror where both sides spam recovery equally,
+    net_hp ≈ 0 every turn, so the -0.002 step penalty dominates and the policy
+    is pushed toward faster resolutions.  Raw healing alone (opponent idle) still
+    gives a positive signal, which is desirable — it rewards preserving your team.
 
     The turn penalty sums to -0.2 over a 100-turn game (small vs ±1 terminal),
     but to -2.0 over a 1000-turn stall — decisively worse than losing (-1.0).
     """
     hp_dealt    = prev.opp_hp_total - curr.opp_hp_total  # positive = good
+    hp_gained   = curr.my_hp_total  - prev.my_hp_total   # positive = good (healing)
     gave_status = curr.opp_status   - prev.opp_status
     took_status = curr.my_status    - prev.my_status
     kos_dealt   = curr.opp_fainted  - prev.opp_fainted
     kos_taken   = curr.my_fainted   - prev.my_fainted
 
     r = (-0.002                                           # per-step stall penalty
-       + 0.01 * hp_dealt
+       + 0.01 * (hp_dealt + hp_gained)                   # net HP differential
        + 0.005 * (gave_status - took_status)
        + 0.01  * (kos_dealt  - kos_taken))
 
