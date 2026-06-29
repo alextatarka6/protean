@@ -6,7 +6,7 @@ Showdown server (port 8001) to fine-tune with Proximal Policy Optimisation.
 
 Design:
   - 4 learner players + 4 opponent players, all sharing the live model weights
-  - Opponent weights synced to learner every --opponent-sync-interval episodes
+  - Opponent weights synced to learner every --opponent-sync-interval episodes (default: 20)
   - Rollout buffer: --rollout-steps transitions across all agents
   - GAE (γ=0.99, λ=0.95) for advantage estimation
   - PPO clip ε=0.2, 4 epochs per rollout, minibatch 256
@@ -455,11 +455,11 @@ def parse_args() -> argparse.Namespace:
                    help="Value function loss coefficient (lower = less value-head influence early)")
     p.add_argument("--kl-beta",          type=float, default=0.1,
                    help="KL penalty weight vs frozen BC policy (default: 0.1; was 0.01)")
-    p.add_argument("--bc-opponent-frac", type=float, default=0.5,
-                   help="Fraction of opponent slots using frozen BC (default: 0.5)")
+    p.add_argument("--bc-opponent-frac", type=float, default=0.75,
+                   help="Fraction of opponent slots using frozen BC (default: 0.75)")
     p.add_argument("--lr",             type=float, default=1e-4)
-    p.add_argument("--opponent-sync-interval", type=int, default=50,
-                   help="Sync self-play opponent weights to learner every N episodes")
+    p.add_argument("--opponent-sync-interval", type=int, default=20,
+                   help="Sync self-play opponent weights to learner every N episodes (default: 20)")
     p.add_argument("--checkpoint-interval",    type=int, default=500)
     return p.parse_args()
 
