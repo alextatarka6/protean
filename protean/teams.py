@@ -80,11 +80,11 @@ Gengar
 - Explosion
 - Psychic
 
-Exeggutor
-- Sleep Powder
-- Psychic
-- Explosion
-- Stun Spore
+Zapdos
+- Thunderbolt
+- Thunder Wave
+- Drill Peck
+- Agility
 
 Snorlax
 - Body Slam
