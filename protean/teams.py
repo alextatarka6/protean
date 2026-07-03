@@ -41,11 +41,11 @@ Starmie
 - Recover
 - Thunderbolt
 
-Exeggutor
-- Sleep Powder
-- Psychic
-- Explosion
-- Double-Edge
+Zapdos
+- Thunderbolt
+- Thunder Wave
+- Drill Peck
+- Agility
 
 Snorlax
 - Body Slam
@@ -54,7 +54,7 @@ Snorlax
 - Reflect
 """.strip()
 
-# Offensive team: fast breakers + Zapdos for Electric coverage
+# Offensive team: fast breakers + Exeggutor for sleep
 TEAM_OFFENSIVE = """
 Tauros
 - Body Slam
@@ -62,11 +62,11 @@ Tauros
 - Blizzard
 - Fire Blast
 
-Zapdos
-- Thunderbolt
-- Thunder Wave
-- Drill Peck
-- Agility
+Exeggutor
+- Sleep Powder
+- Psychic
+- Explosion
+- Double-Edge
 
 Starmie
 - Blizzard

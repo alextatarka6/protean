@@ -1,7 +1,12 @@
 """
-Evaluate PPO checkpoint(s) via live battles on the local Showdown server.
+Evaluate PPO or BC checkpoint(s) via live battles on the local Showdown server.
 
-Single-checkpoint mode  (default):
+BC-only mode  (--eval-bc):
+  Runs 2 match-ups for --n-battles battles each:
+    1. BC vs Random       — baseline floor
+    2. BC vs itself       — sanity check; should be ~50%
+
+Single-checkpoint mode  (--checkpoint):
   Runs 3 match-ups for --n-battles battles each:
     1. PPO vs Random      — baseline floor
     2. PPO vs BC policy   — measures RL improvement over imitation
@@ -14,7 +19,11 @@ Sweep mode  (--sweep):
   checkpoints — no username collisions, no reconnects.
 
 Usage:
-    # Single checkpoint
+    # BC baseline
+    python scripts/eval_rl.py --eval-bc \\
+        --bc-checkpoint checkpoints/bc_final.pt
+
+    # Single PPO checkpoint
     python scripts/eval_rl.py \\
         --checkpoint checkpoints/ppo_ep0006000.pt \\
         --bc-checkpoint checkpoints/bc_final.pt
@@ -114,6 +123,43 @@ def run_and_measure(player, opponent, n: int) -> tuple[int, int]:
     asyncio.run(run_match(player, opponent, n))
     time.sleep(1.0)
     return player.n_won_battles - w0, player.n_finished_battles - p0
+
+
+# ---------------------------------------------------------------------------
+# BC-only eval
+# ---------------------------------------------------------------------------
+
+def evaluate_bc(args: argparse.Namespace) -> None:
+    device = get_device()
+    print(f"Device: {device}\n")
+
+    print("Loading BC checkpoint…")
+    bc_model = load_model(args.bc_checkpoint, device)
+    print()
+
+    n     = args.n_battles
+    teams = ALL_TEAMS
+
+    print(f"Running {n} battles per match-up  (greedy eval agent)\n")
+    print(f"{'Match-up':<35} {'W/P':>7}  Win rate")
+    print("-" * 55)
+
+    # 1. BC vs Random
+    bc_v_rand = Gen1OUPlayer(model=bc_model, device=device, sample=False,
+                             username="EvalBC_1", team=teams[0])
+    rand_opp  = make_random_player("EvalBC_Rand", teams[1])
+    w, p = run_and_measure(bc_v_rand, rand_opp, n)
+    print(f"  {'BC vs Random':<33} {w:>3} / {p:<3}  {w/max(p,1):.1%}")
+
+    # 2. BC vs itself
+    bc_a = Gen1OUPlayer(model=bc_model, device=device, sample=False,
+                        username="EvalBC_A", team=teams[1])
+    bc_b = Gen1OUPlayer(model=bc_model, device=device, sample=False,
+                        username="EvalBC_B", team=teams[2])
+    w, p = run_and_measure(bc_a, bc_b, n)
+    print(f"  {'BC vs BC (self)':<33} {w:>3} / {p:<3}  {w/max(p,1):.1%}")
+
+    print("\nDone.")
 
 
 # ---------------------------------------------------------------------------
@@ -250,13 +296,15 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Evaluate PPO checkpoint(s) via live battles")
 
     mode = p.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--eval-bc", action="store_true",
+                      help="Evaluate BC checkpoint only (vs Random + vs itself)")
     mode.add_argument("--checkpoint", type=str,
                       help="Single PPO checkpoint to evaluate (.pt)")
     mode.add_argument("--sweep", action="store_true",
                       help="Sweep all ppo_ep*.pt in --checkpoint-dir")
 
     p.add_argument("--bc-checkpoint",  type=str, required=True,
-                   help="BC checkpoint for comparison (.pt)")
+                   help="BC checkpoint (.pt); used as opponent for PPO modes, subject for --eval-bc")
     p.add_argument("--checkpoint-dir", type=str, default="checkpoints",
                    help="Directory to scan for ppo_ep*.pt  (default: checkpoints/)")
     p.add_argument("--min-episode",    type=int, default=None,
@@ -270,7 +318,9 @@ def parse_args() -> argparse.Namespace:
 
 if __name__ == "__main__":
     args = parse_args()
-    if args.sweep:
+    if args.eval_bc:
+        evaluate_bc(args)
+    elif args.sweep:
         sweep(args)
     else:
         evaluate(args)

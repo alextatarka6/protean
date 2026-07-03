@@ -1,83 +1,159 @@
-# Pokémon Showdown RL Agent
- 
-A self-play reinforcement learning agent for Pokémon Showdown Random Battles (Gen 9).
- 
-**Current status:** Phase 0 — environment setup and orientation.
- 
-See `pokemon-rl-plan.md` (one level up) for the full project plan.
- 
+# Protean — Gen1OU Pokémon Showdown AI
+
+A from-scratch RL agent for Pokémon Showdown Gen 1 OU, inspired by the
+[metamon paper](https://arxiv.org/abs/2406.08070). Pipeline: raw replays →
+parsed dataset → BC pretraining → PPO self-play fine-tuning.
+
+**Current status:** Phase 4 complete (PPO). Phase 5 (evaluation & live play) in progress.
+
+---
+
 ## Quick start
- 
-### 1. Set up the local Showdown server
- 
-You need a local Showdown server so you don't hit the public ladder during development. From this repo's parent directory:
- 
+
+### 1. Start the local Showdown server
+
 ```bash
-bash scripts/setup_showdown.sh
+./scripts/start_server.sh        # foreground
+./scripts/start_server.sh &      # background
 ```
- 
-This clones `smogon/pokemon-showdown`, installs dependencies, and starts the server on port 8000 with auth disabled. Leave this running in its own terminal.
- 
-### 2. Set up the Python environment
- 
-Use Python 3.10 or newer. From the repo root:
- 
+
+Server runs on port 8001 with auth disabled. Required for all RL training and evaluation.
+
+### 2. Activate the Python environment
+
 ```bash
-python -m venv .venv
-source .venv/bin/activate     # on Windows: .venv\Scripts\activate
-pip install -e .[dev]
+source .venv/bin/activate
 ```
- 
-### 3. Run the smoke test
- 
-Two random agents battling each other against the local server:
- 
+
+### 3. Play on the ladder
+
 ```bash
-python scripts/random_vs_random.py --battles 10
+export PS_USERNAME="YourBotName"
+export PS_PASSWORD="yourpassword"
+python scripts/ladder.py --checkpoint checkpoints/ppo_final.pt
 ```
- 
-Expected output: a win/loss tally roughly 50/50. If you get a connection error, your Showdown server isn't running on `localhost:8000`.
- 
-### 4. Watch a battle in the browser
- 
-While agents are battling, open `http://localhost:8000` in your browser, log in as a guest, and search for the bot's username (`RandomBot1` or `RandomBot2`). You can spectate live games — extremely useful for debugging.
- 
+
+Register a bot account at https://play.pokemonshowdown.com first.
+Spectate live by searching the bot's username on the PS website.
+
+### 4. Evaluate a checkpoint
+
+```bash
+# BC baseline (offline — accuracy on HF holdout set)
+python scripts/eval_bc.py --checkpoint checkpoints/bc_final.pt --confusion
+
+# BC baseline (live battles vs Random + self)
+python scripts/eval_rl.py --eval-bc \
+    --bc-checkpoint checkpoints/bc_final.pt
+
+# Single PPO checkpoint vs Random + BC (live battles)
+python scripts/eval_rl.py \
+    --checkpoint checkpoints/ppo_final.pt \
+    --bc-checkpoint checkpoints/bc_final.pt
+
+# Sweep all PPO checkpoints (40 live battles each)
+python scripts/eval_rl.py --sweep \
+    --bc-checkpoint checkpoints/bc_final.pt \
+    --n-battles 40 \
+    --min-episode 4000
+```
+
+`eval_bc.py` runs offline against the HuggingFace dataset (no server needed).
+`eval_rl.py` runs live battles on the local Showdown server (server must be running).
+
+---
+
+## Training
+
+### BC pretraining (Phase 3 — complete)
+
+```bash
+python scripts/train_bc.py
+```
+
+Streams from `atatark2/protean-gen1ou` on HuggingFace. Final checkpoint:
+`checkpoints/bc_final.pt` (57.1% holdout accuracy, 50k steps).
+
+### PPO self-play (Phase 4 — complete)
+
+```bash
+# Fresh run from BC
+python scripts/train_ppo.py --bc-checkpoint checkpoints/bc_final.pt
+
+# Resume from checkpoint
+python scripts/train_ppo.py \
+    --bc-checkpoint checkpoints/bc_final.pt \
+    --resume checkpoints/ppo_ep0005000.pt
+```
+
+Checkpoints saved every 500 episodes to `checkpoints/ppo_ep*.pt`.
+
+---
+
 ## Project structure
- 
+
 ```
-pokemon-rl/
-├── README.md
-├── pyproject.toml          # dependencies + package config
-├── .gitignore
-├── src/pokerl/
-│   ├── __init__.py
-│   ├── agents/             # bot implementations (heuristic, supervised, RL)
-│   │   ├── __init__.py
-│   │   └── heuristic.py    # Phase 1 stub — max-damage bot
-│   ├── encoding/           # battle state -> tensor
-│   │   ├── __init__.py
-│   │   └── battle.py       # Phase 1 stub — feature encoder
-│   └── eval/               # evaluation harness
-│       ├── __init__.py
-│       └── arena.py        # Phase 1 stub — round-robin tournaments
-├── scripts/
-│   ├── random_vs_random.py # Phase 0 smoke test
-│   └── setup_showdown.sh   # one-shot Showdown server setup
-└── tests/
-    └── test_imports.py     # sanity test that everything imports
+protean/
+  backend/
+    replay_parser/    # Parses raw Showdown .log text → ParsedBattle
+    team_inference.py # Fills unrevealed moves via usage stats sampling
+    usage_stats.py    # MovesetStats, load_format_stats("gen1ou")
+  pov.py             # reconstruct_both_povs → (p1_pov, p2_pov)
+  pokedex.py         # get_base_stats, get_types, get_move_data
+  tokenizer.py       # Gen1Tokenizer (459 tokens)
+  obs_space.py       # Gen1OUObservationSpace, Gen1ActionSpace
+  model.py           # Gen1OUPolicy (3.52M params) — policy + value heads
+  rl_env.py          # poke-env bridge: Gen1OUPlayer, compute_reward
+  teams.py           # 3 gen1ou training teams + stall team for eval
+
+scripts/
+  build_gen1ou_dataset.py  # Builds HF dataset from raw replays
+  train_bc.py              # BC training loop
+  eval_bc.py               # BC accuracy eval (overall/move/switch)
+  train_ppo.py             # PPO self-play training loop
+  eval_rl.py               # Live battle evaluation (BC, PPO, sweep)
+  ladder.py                # Rated ladder play on the real Showdown server
+  start_server.sh          # Start local Showdown server on port 8001
+
+server/
+  pokemon-showdown/        # Git submodule: smogon/pokemon-showdown
+
+checkpoints/
+  bc_final.pt              # BC checkpoint (57.1% accuracy)
+  ppo_ep*.pt               # PPO snapshots every 500 episodes
 ```
- 
-## Phase roadmap
- 
-- **Phase 0** (this week): get the env running, understand the protocol. ← *you are here*
-- **Phase 1**: heuristic baseline + state encoder
-- **Phase 2**: RL fundamentals on toy environments (CartPole, LunarLander)
-- **Phase 3**: supervised pretraining on Smogon replays
-- **Phase 4**: PPO self-play fine-tuning
-- **Phase 5**: opponent modeling / belief states
-- **Phase 6**: ladder evaluation
-## Notes
- 
-The `poke-env` API has shifted across versions. If imports fail, check the [poke-env docs](https://poke-env.readthedocs.io/) for the version pinned in `pyproject.toml` and adjust. The `random_vs_random.py` script targets poke-env >= 0.8.
- 
-Don't run any of this against the public Showdown ladder yet. Use the local server.
+
+---
+
+## Model
+
+`Gen1OUPolicy` — 3.52M parameters, runs on MPS (Apple Silicon).
+
+```
+text (71 tokens)  → Transformer(4L, d=256, h=8) → CLS [256]
+numbers (48-dim)  → Linear → ReLU              → [256]
+                    Concat [512] → MLP          → state [256]
+                    ├── policy_head → log-probs [9]
+                    └── value_head  → V(s) [1]
+```
+
+9 action slots: move 1–4 (alphabetical) + switch to bench 1–5.
+
+---
+
+## Reward (metamon Appendix E.1)
+
+```
+r = -0.002                              # per-step cost
+  + 0.01 * (hp_dealt + hp_gained)      # net HP differential
+  + 0.005 * (gave_status - took_status)
+  + 0.01  * (kos_dealt - kos_taken)
+  ± 1.0                                # terminal win/loss
+```
+
+---
+
+## Dataset
+
+HuggingFace: `atatark2/protean-gen1ou` (~194,715 rows, both POVs per battle).
+Source: `jakegrigsby/metamon-raw-replays` shards 35 & 36.

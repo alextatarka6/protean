@@ -188,11 +188,17 @@ def train(args: argparse.Namespace) -> None:
     start_step = 0
     if args.resume:
         ckpt = torch.load(args.resume, map_location=device)
-        model.load_state_dict(ckpt["model"])
-        optimizer.load_state_dict(ckpt["optimizer"])
-        scheduler.load_state_dict(ckpt["scheduler"])
-        start_step = ckpt["step"]
-        print(f"Resumed from step {start_step}")
+        model.load_state_dict(ckpt["model"], strict=False)
+        if args.finetune:
+            # Fine-tune: only restore model weights; use fresh optimizer/scheduler
+            # so mismatched parameter groups (e.g. BC → PPO checkpoint) don't error.
+            start_step = 0
+            print(f"Fine-tuning from {args.resume} (fresh optimizer, lr={args.lr})")
+        else:
+            optimizer.load_state_dict(ckpt["optimizer"])
+            scheduler.load_state_dict(ckpt["scheduler"])
+            start_step = ckpt["step"]
+            print(f"Resumed from step {start_step}")
 
     stream = sample_stream(tokenizer)
 
@@ -294,6 +300,8 @@ def parse_args() -> argparse.Namespace:
                    help="Loss weight for switch slots 4-8 (default: 3.0 to offset ~3:1 move/switch imbalance)")
     p.add_argument("--resume",        type=str,   default=None,
                    help="Path to a checkpoint to resume training from")
+    p.add_argument("--finetune",      action="store_true",
+                   help="Only restore model weights from --resume; use fresh optimizer/scheduler")
     return p.parse_args()
 
 

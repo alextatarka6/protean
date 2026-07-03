@@ -61,12 +61,14 @@ from protean.tokenizer import get_tokenizer
 # Server configuration helper
 # ---------------------------------------------------------------------------
 
-from poke_env import ServerConfiguration
+from poke_env import ServerConfiguration, ShowdownServerConfiguration
 
 LOCAL_SERVER = ServerConfiguration(
     websocket_url="ws://localhost:8001/showdown/websocket",
     authentication_url="https://play.pokemonshowdown.com/action.php?",
 )
+
+SHOWDOWN_SERVER = ShowdownServerConfiguration
 
 # ---------------------------------------------------------------------------
 # Transition dataclass
@@ -372,12 +374,15 @@ class Gen1OUPlayer(Player):
 
     def __init__(
         self,
-        model:          torch.nn.Module,
-        device:         torch.device,
-        username:       str  = "ProteanBot",
-        sample:         bool = True,   # True = sample from policy; False = greedy
-        battle_format:  str  = "gen1ou",
-        team:           str | None = None,   # Showdown team string; required for gen1ou
+        model:                torch.nn.Module,
+        device:               torch.device,
+        username:             str  = "ProteanBot",
+        password:             str | None = None,
+        sample:               bool = True,
+        verbose:              bool = False,
+        battle_format:        str  = "gen1ou",
+        team:                 str | None = None,
+        server_configuration: ServerConfiguration = None,
         **kwargs,
     ):
         # ALL instance attributes must be set before super().__init__() because
@@ -391,7 +396,9 @@ class Gen1OUPlayer(Player):
         self.model   = model
         self.device  = device
         self.sample  = sample
+        self.verbose = verbose
         self._tokenizer = get_tokenizer()
+        self._server_cfg = server_configuration or LOCAL_SERVER
 
         # Per-battle state tracking
         self._prev_state:     dict[str, BattleState] = {}
@@ -408,10 +415,10 @@ class Gen1OUPlayer(Player):
         self._buffer: list[Transition] = []
         self._lock = threading.Lock()
 
-        account_cfg = AccountConfiguration(username, None)
+        account_cfg = AccountConfiguration(username, password)
         super().__init__(
             account_configuration=account_cfg,
-            server_configuration=LOCAL_SERVER,
+            server_configuration=self._server_cfg,
             battle_format=battle_format,
             max_concurrent_battles=1,
             team=team,
@@ -439,9 +446,24 @@ class Gen1OUPlayer(Player):
         amask   = torch.from_numpy(mask).bool().unsqueeze(0).to(self.device)
 
         with torch.no_grad():
-            action_idx, log_prob, value = self.model.act(
-                tokens, numbers, amask, sample=self.sample
-            )
+            if self.verbose:
+                log_probs_t, value_t = self.model(tokens, numbers, amask)
+                probs_np = log_probs_t[0].exp().cpu().numpy()
+                if self.sample:
+                    from torch.distributions import Categorical
+                    dist   = Categorical(logits=log_probs_t)
+                    act_t  = dist.sample()[0]
+                    log_prob  = dist.log_prob(act_t).item()
+                    action_idx = int(act_t.item())
+                else:
+                    action_idx = int(log_probs_t[0].argmax().item())
+                    log_prob   = log_probs_t[0, action_idx].item()
+                value = float(value_t[0, 0].item())
+            else:
+                action_idx, log_prob, value = self.model.act(
+                    tokens, numbers, amask, sample=self.sample
+                )
+                probs_np = None
 
         # Decode action → poke-env BattleOrder (needed to record move name below)
         order = action_idx_to_order(action_idx, battle)
@@ -470,6 +492,9 @@ class Gen1OUPlayer(Player):
                 # Pick the newly revealed move (usually exactly one)
                 self._prev_opp_move[battle_id] = _clean(next(iter(new_moves)))
             self._opp_moves_seen[battle_id] = current_opp_moves
+
+        if self.verbose and probs_np is not None:
+            self._log_decision(battle, action_idx, probs_np, mask)
 
         # Close out the previous step's transition now that we have a new state
         curr_state = _extract_state(battle)
@@ -507,6 +532,24 @@ class Gen1OUPlayer(Player):
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _log_decision(
+        self, battle: Battle, chosen: int, probs: np.ndarray, mask: np.ndarray
+    ) -> None:
+        sorted_moves = _known_moves(battle)
+        switches     = battle.available_switches
+
+        names: list[str] = []
+        for i in range(N_MOVE_SLOTS):
+            names.append(sorted_moves[i] if i < len(sorted_moves) else f"move{i}")
+        for i in range(N_SWITCH_SLOTS):
+            names.append(f">{_clean(switches[i].species)}" if i < len(switches) else f"sw{i}")
+
+        valid = [(names[i], probs[i], i == chosen) for i in range(9) if mask[i]]
+        valid.sort(key=lambda x: -x[1])
+
+        parts = [f"{'▶ ' if c else ''}{n}({p:.0%})" for n, p, c in valid]
+        print(f"  Bot: {'  '.join(parts)}")
+
     def _close_step(
         self,
         battle_id: str,
@@ -538,3 +581,109 @@ class Gen1OUPlayer(Player):
     @property
     def buffer_size(self) -> int:
         return len(self._buffer)
+
+
+# ---------------------------------------------------------------------------
+# HumanPlayer — interactive terminal player
+# ---------------------------------------------------------------------------
+
+def _dn(s: str) -> str:
+    """Display name: bodyslam → Body Slam."""
+    return s.replace("-", " ").replace("_", " ").title()
+
+
+def _fmt_boosts(boosts: dict) -> str:
+    parts = [f"{'+'if v>0 else ''}{v} {k}" for k, v in boosts.items() if v != 0]
+    return f"  [{', '.join(parts)}]" if parts else ""
+
+
+def _human_print_state(battle: Battle) -> None:
+    print(f"\n{'─'*44}")
+    print(f"Turn {battle.turn}")
+
+    opp = battle.opponent_active_pokemon
+    me  = battle.active_pokemon
+
+    if opp:
+        opp_hp  = f"{opp.current_hp_fraction:.0%}"
+        opp_st  = f"  [{opp.status.name}]" if opp.status else ""
+        opp_bst = _fmt_boosts(dict(opp.boosts)) if hasattr(opp, "boosts") else ""
+        print(f"Opp:  {_dn(opp.species):<14} {opp_hp}{opp_st}{opp_bst}")
+        opp_bench = [p for p in battle.opponent_team.values() if not p.active and not p.fainted]
+        if opp_bench:
+            bench_str = "  ".join(f"{_dn(p.species)} {p.current_hp_fraction:.0%}" for p in opp_bench)
+            print(f"      bench: {bench_str}")
+
+    print()
+
+    if me:
+        me_hp  = f"{me.current_hp_fraction:.0%}"
+        me_st  = f"  [{me.status.name}]" if me.status else ""
+        me_bst = _fmt_boosts(dict(me.boosts)) if hasattr(me, "boosts") else ""
+        print(f"You:  {_dn(me.species):<14} {me_hp}{me_st}{me_bst}")
+
+    print()
+
+    n = 1
+    if not battle.force_switch and battle.available_moves:
+        for m in battle.available_moves:
+            print(f"  {n}. {_dn(m.id)}")
+            n += 1
+        print()
+
+    for sw in battle.available_switches:
+        print(f"  {n}. → {_dn(sw.species):<16} {sw.current_hp_fraction:.0%}")
+        n += 1
+
+    print()
+
+
+def _human_build_options(battle: Battle) -> list:
+    orders = []
+    if not battle.force_switch:
+        for m in battle.available_moves:
+            orders.append(Player.create_order(m))
+    for sw in battle.available_switches:
+        orders.append(Player.create_order(sw))
+    return orders
+
+
+def _human_read_choice(options: list):
+    n = len(options)
+    while True:
+        try:
+            raw = input(f"Choice (1-{n}): ").strip()
+            idx = int(raw) - 1
+            if 0 <= idx < n:
+                return options[idx]
+            print(f"  Enter a number from 1 to {n}.")
+        except ValueError:
+            print(f"  Enter a number from 1 to {n}.")
+        except EOFError:
+            return options[0]
+
+
+class HumanPlayer(Player):
+    """
+    Interactive player: prints game state to stdout, reads choice from stdin.
+
+    choose_move blocks on input() which freezes the asyncio event loop — fine
+    for a single local battle, but don't use this in concurrent/training contexts.
+
+    Future: replace with a WebSocket bridge so the human plays through the
+    Showdown browser UI at http://localhost:8001.
+    """
+
+    def __init__(self, username: str = "Human", team: str | None = None):
+        super().__init__(
+            account_configuration=AccountConfiguration(username, None),
+            server_configuration=LOCAL_SERVER,
+            battle_format="gen1ou",
+            max_concurrent_battles=1,
+            team=team,
+        )
+
+    def choose_move(self, battle: Battle):
+        _human_print_state(battle)
+        options = _human_build_options(battle)
+        return _human_read_choice(options)

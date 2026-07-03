@@ -35,7 +35,7 @@ protean/
   obs_space.py           # Gen1OUObservationSpace, Gen1ActionSpace
   model.py               # Gen1OUPolicy (3.52M params) — policy + value heads
   rl_env.py              # poke-env bridge: Gen1OUPlayer, battle_to_obs, compute_reward
-  teams.py               # 4 gen1ou teambuilder strings + random_team() helper
+  teams.py               # 3 training teams + TEAM_STALL (eval only) + random_team() helper
   data/
     gen1ou_vocab.json    # Pre-built 459-token vocabulary
 
@@ -45,6 +45,7 @@ scripts/
   eval_bc.py                # BC evaluation: overall/move/switch accuracy + confusion matrix
   start_server.sh           # Start local Showdown server on port 8001
   train_ppo.py              # PPO self-play training loop (Phase 4 — complete)
+  eval_rl.py                # Live battle evaluation — BC baseline, PPO vs BC/Random, sweep mode
 
 server/
   pokemon-showdown/         # Git submodule: smogon/pokemon-showdown
@@ -210,7 +211,9 @@ Checkpoints saved every 500 episodes to `checkpoints/ppo_ep*.pt`. Final model: `
 - `ROADMAP.md` — full phase-by-phase roadmap with completion status
 - `scripts/build_gen1ou_dataset.py` — dataset pipeline (run to rebuild)
 - `scripts/train_bc.py` — BC training (Phase 3, complete)
-- `scripts/eval_bc.py` — BC evaluation script
+- `scripts/eval_bc.py` — BC evaluation script (offline: accuracy on HF dataset)
+- `scripts/train_ppo.py` — PPO self-play training (Phase 4, complete)
+- `scripts/eval_rl.py` — live battle evaluation; modes: `--eval-bc`, `--checkpoint`, `--sweep`
 - `scripts/start_server.sh` — start local Showdown server on port 8001
 - `.gitignore` — excludes `gen1ou_dataset*/`, `.venv/`, `__pycache__/`, `checkpoints/`
 
