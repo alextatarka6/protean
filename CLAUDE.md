@@ -154,12 +154,12 @@ Key implementation notes:
 - **Critic**: Shared trunk, separate `value_head: Linear(256→1)`, zero-init, gradient-stopped from trunk
 - **Reward** (dense, faithful to metamon Appendix E.1):
   ```
-  -0.002 (per-step) + 0.01*(hp_dealt + hp_gained) + 0.005*(gave_status − took_status)
+  -0.005 (per-step) + 0.01*(hp_dealt + hp_gained) + 0.005*(gave_status − took_status)
   + 0.01*(KOs_dealt − KOs_taken) + 1.0*victory
   ```
   `hp_dealt + hp_gained` = net HP differential (Δmy_hp − Δopp_hp = metamon's r_hp).
   In a stall mirror where both sides heal equally, net ≈ 0 and the step penalty
-  dominates. Step penalty -0.002 → 1000-turn draw = -2.0, worse than losing (-1.0).
+  dominates. Step penalty -0.005 → 200-turn stall = -1.0 (same as losing), 1000-turn draw = -5.0.
 - **KL penalty**: `β=0.01 * KL(π_RL ‖ π_BC)` — frozen BC checkpoint as anchor
 - **PPO hyperparameters**: clip ε=0.2, GAE γ=0.99 λ=0.95, 4 epochs/rollout, minibatch 256, lr=1e-4, vf_coef=0.1
 

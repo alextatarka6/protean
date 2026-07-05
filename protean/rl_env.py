@@ -323,7 +323,7 @@ def compute_reward(
     All shaping terms are scaled to O(0.01)/turn so GAE returns stay in [-1.5, +1.5].
 
     Spec:
-        -0.002                          (per-step cost — discourages stalling)
+        -0.005                          (per-step cost — discourages stalling)
         0.01 * net_hp                   (net HP differential: Δmy_hp − Δopp_hp)
       + 0.005 * (gave_status − took_status)
       + 0.01  * (KOs_dealt − KOs_taken)
@@ -337,8 +337,9 @@ def compute_reward(
     is pushed toward faster resolutions.  Raw healing alone (opponent idle) still
     gives a positive signal, which is desirable — it rewards preserving your team.
 
-    The turn penalty sums to -0.2 over a 100-turn game (small vs ±1 terminal),
-    but to -2.0 over a 1000-turn stall — decisively worse than losing (-1.0).
+    The turn penalty sums to -0.5 over a 100-turn game (small vs ±1 terminal),
+    but to -5.0 over a 1000-turn stall. A 200-turn stall costs -1.0 — equal to
+    losing outright, creating a strong deterrent against passive play.
     """
     hp_dealt    = prev.opp_hp_total - curr.opp_hp_total  # positive = good
     hp_gained   = curr.my_hp_total  - prev.my_hp_total   # positive = good (healing)
@@ -347,7 +348,7 @@ def compute_reward(
     kos_dealt   = curr.opp_fainted  - prev.opp_fainted
     kos_taken   = curr.my_fainted   - prev.my_fainted
 
-    r = (-0.002                                           # per-step stall penalty
+    r = (-0.005                                           # per-step stall penalty
        + 0.01 * (hp_dealt + hp_gained)                   # net HP differential
        + 0.005 * (gave_status - took_status)
        + 0.01  * (kos_dealt  - kos_taken))
