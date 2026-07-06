@@ -275,6 +275,14 @@ def _build_obs(
         "<opp_prev>",    _clean(prev_opp_move) if prev_opp_move else "<blank>",
     ]
 
+    # bench statuses appended at end — avoids shifting existing token positions
+    bench_status_tokens = ["<bench_status>"]
+    for i in range(N_SWITCH_SLOTS):
+        if i < len(alive_bench):
+            bench_status_tokens.append(_norm_status(alive_bench[i].get("status", "")))
+        else:
+            bench_status_tokens.append("nostatus")
+
     full_tokens = (
         ["<gen1ou>", choice_token]
         + player_tokens
@@ -283,6 +291,7 @@ def _build_obs(
         + opp_tokens
         + cond_tokens
         + prev_tokens
+        + bench_status_tokens
     )
 
     text = " ".join(full_tokens)
