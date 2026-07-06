@@ -335,24 +335,20 @@ def compute_reward(
     All shaping terms are scaled to O(0.01)/turn so GAE returns stay in [-1.5, +1.5].
 
     Spec:
-        -0.01                           (per-step cost — discourages stalling)
-        0.01 * net_hp                   (net HP differential: Δmy_hp − Δopp_hp)
+        -0.003                          (per-step cost — discourages stalling)
+        0.01  * hp_dealt                (opponent HP loss)
+      + 0.005 * hp_gained               (own healing — halved so it can't cancel step cost)
       + 0.005 * (gave_status − took_status)
       + 0.01  * (KOs_dealt − KOs_taken)
       + 1.0   * victory   (terminal, undiscounted)
 
-    net_hp = hp_dealt + hp_gained = (prev.opp − curr.opp) + (curr.my − prev.my)
-           = Δmy_hp − Δopp_hp  — mirrors metamon's r_hp term.
+    hp_dealt  = prev.opp_hp_total − curr.opp_hp_total  (positive = good)
+    hp_gained = curr.my_hp_total  − prev.my_hp_total   (positive = healing)
 
-    Key property: in a stall mirror where both sides spam recovery equally,
-    net_hp ≈ 0 every turn, so the -0.002 step penalty dominates and the policy
-    is pushed toward faster resolutions.  Raw healing alone (opponent idle) still
-    gives a positive signal, which is desirable — it rewards preserving your team.
-
-    The turn penalty sums to -1.0 over a 100-turn game and -10.0 over a
-    1000-turn stall. Even a full recovery move (hp_gained=0.5) only offsets
-    half the step penalty (-0.01 + 0.005 = -0.005), so healing can never
-    cancel the stall cost.
+    Key balance: a full recovery move (hp_gained=0.5) gives +0.0025, which is
+    less than the step cost (-0.003), so healing never cancels the stall penalty.
+    A 100-turn game costs -0.30 in step penalties — tolerable, not dominant vs ±1.0
+    terminal, so the policy can afford strategic long games without panic-rushing.
     """
     hp_dealt    = prev.opp_hp_total - curr.opp_hp_total  # positive = good
     hp_gained   = curr.my_hp_total  - prev.my_hp_total   # positive = good (healing)
@@ -361,8 +357,9 @@ def compute_reward(
     kos_dealt   = curr.opp_fainted  - prev.opp_fainted
     kos_taken   = curr.my_fainted   - prev.my_fainted
 
-    r = (-0.01                                            # per-step stall penalty
-       + 0.01 * (hp_dealt + hp_gained)                   # net HP differential
+    r = (-0.003                                           # per-step stall penalty
+       + 0.01 * hp_dealt                                  # opponent HP loss
+       + 0.005 * hp_gained                                # own healing (halved so it can't cancel step cost)
        + 0.005 * (gave_status - took_status)
        + 0.01  * (kos_dealt  - kos_taken))
 

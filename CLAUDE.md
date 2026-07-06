@@ -154,12 +154,12 @@ Key implementation notes:
 - **Critic**: Shared trunk, separate `value_head: Linear(256→1)`, zero-init, gradient-stopped from trunk
 - **Reward** (dense, faithful to metamon Appendix E.1):
   ```
-  -0.01 (per-step) + 0.01*(hp_dealt + hp_gained) + 0.005*(gave_status − took_status)
+  -0.003 (per-step) + 0.01*hp_dealt + 0.005*hp_gained + 0.005*(gave_status − took_status)
   + 0.01*(KOs_dealt − KOs_taken) + 1.0*victory
   ```
-  `hp_dealt + hp_gained` = net HP differential (Δmy_hp − Δopp_hp = metamon's r_hp).
-  Step penalty -0.01 → even a full recovery move (hp_gained=0.5 → +0.005) can't cancel
-  the step cost. 100-turn game = -1.0 (same as losing), 1000-turn stall = -10.0.
+  hp_gained coefficient halved (0.005) so a full recovery move (+0.0025) can't cancel
+  the step cost (-0.003). 100-turn game = -0.30 (tolerable), stall costs accumulate
+  without forcing reckless aggression. -0.01/step caused win rate collapse.
 - **KL penalty**: `β=0.01 * KL(π_RL ‖ π_BC)` — frozen BC checkpoint as anchor
 - **PPO hyperparameters**: clip ε=0.2, GAE γ=0.99 λ=0.95, 4 epochs/rollout, minibatch 256, lr=1e-4, vf_coef=0.1
 
