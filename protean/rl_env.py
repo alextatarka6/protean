@@ -22,9 +22,21 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import logging
 import threading
 from dataclasses import dataclass, field
 from typing import Optional
+
+
+# Suppress poke-env's verbose bigerror turn-1000 stall warning.
+class _StallFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if "bigerror" in record.getMessage() and "auto-tie" in record.getMessage():
+            print("  [stalled]", flush=True)
+            return False
+        return True
+
+logging.getLogger().addFilter(_StallFilter())
 
 import numpy as np
 import torch

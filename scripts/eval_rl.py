@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import logging
 import sys
 import time
 from pathlib import Path
@@ -55,19 +54,6 @@ from protean.teams import ALL_TEAMS
 
 from poke_env.player import RandomPlayer
 from poke_env.ps_client.account_configuration import AccountConfiguration
-
-
-# Suppress noisy poke-env "bigerror" turn-1000 stall warning; print a single
-# "Game stalled" line instead so sweep output stays readable.
-class _StallFilter(logging.Filter):
-    def filter(self, record: logging.LogRecord) -> bool:
-        msg = record.getMessage()
-        if "bigerror" in msg and "auto-tie" in msg:
-            print("  [stalled]", flush=True)
-            return False
-        return True
-
-logging.getLogger().addFilter(_StallFilter())
 
 
 # ---------------------------------------------------------------------------
