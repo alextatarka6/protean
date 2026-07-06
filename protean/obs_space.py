@@ -151,10 +151,10 @@ def _pokemon_text_active(species: str, status: str) -> list[str]:
     return [_clean(species)] + types + [_norm_status(status)]
 
 
-def _pokemon_text_bench(species: str, moves: list[str], status: str = "") -> list[str]:
-    """Text tokens for a bench pokemon: species + status + <moveset> + move names (padded to 4)."""
+def _pokemon_text_bench(species: str, moves: list[str]) -> list[str]:
+    """Text tokens for a bench pokemon: species + <moveset> + move names (padded to 4)."""
     sorted_m = _sorted_moves(moves)
-    tokens = [_clean(species), _norm_status(status), "<moveset>"]
+    tokens = [_clean(species), "<moveset>"]
     for i in range(N_MOVE_SLOTS):
         tokens.append(_clean(sorted_m[i]) if i < len(sorted_m) else "<blank>")
     return tokens
@@ -249,11 +249,10 @@ def _build_obs(
             p = alive_bench[i]
             switch_tokens += (
                 ["<switch>"]
-                + _pokemon_text_bench(p["species"], p.get("revealed_moves", []),
-                                      p.get("status", ""))
+                + _pokemon_text_bench(p["species"], p.get("revealed_moves", []))
             )
         else:
-            switch_tokens += ["<switch>", "<blank>", "<blank>", "<moveset>",
+            switch_tokens += ["<switch>", "<blank>", "<moveset>",
                               "<blank>", "<blank>", "<blank>", "<blank>"]
 
     # opponent active
