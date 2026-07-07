@@ -132,6 +132,45 @@ Exeggutor
 - Double-Edge
 """.strip()
 
+# Zam-Egg-Zap: Alakazam + Exeggutor + Zapdos core, Physlax, Mega Drain Egg for Rhydon longevity
+TEAM_ZAM_EGG_ZAP = """
+Alakazam
+- Psychic
+- Recover
+- Thunder Wave
+- Seismic Toss
+
+Exeggutor
+- Sleep Powder
+- Psychic
+- Mega Drain
+- Double-Edge
+
+Zapdos
+- Thunderbolt
+- Thunder Wave
+- Drill Peck
+- Agility
+
+Chansey
+- Soft-Boiled
+- Thunder Wave
+- Ice Beam
+- Seismic Toss
+
+Snorlax
+- Body Slam
+- Hyper Beam
+- Earthquake
+- Self-Destruct
+
+Tauros
+- Body Slam
+- Hyper Beam
+- Blizzard
+- Earthquake
+""".strip()
+
 # Slowbro stall: double walls + Lapras
 TEAM_STALL = """
 Tauros
@@ -183,6 +222,7 @@ ALL_TEAMS: list[str] = [
     TEAM_STANDARD,
     TEAM_OFFENSIVE,
     TEAM_BALANCED,
+    TEAM_ZAM_EGG_ZAP,
 ]
 
 
@@ -199,10 +239,11 @@ def get_team(name: str) -> str:
     Valid names: 'standard', 'offensive', 'balanced', 'stall'.
     """
     mapping = {
-        "standard":  TEAM_STANDARD,
-        "offensive": TEAM_OFFENSIVE,
-        "balanced":  TEAM_BALANCED,
-        "stall":     TEAM_STALL,
+        "standard":    TEAM_STANDARD,
+        "offensive":   TEAM_OFFENSIVE,
+        "balanced":    TEAM_BALANCED,
+        "zam_egg_zap": TEAM_ZAM_EGG_ZAP,
+        "stall":       TEAM_STALL,
     }
     if name not in mapping:
         raise ValueError(f"Unknown team {name!r}. Valid: {list(mapping)}")
