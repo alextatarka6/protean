@@ -40,7 +40,7 @@ logging.getLogger().addFilter(_StallFilter())
 
 import numpy as np
 import torch
-from poke_env.environment import Battle, Move, Pokemon
+from poke_env.environment import Battle, Move, Pokemon, Status
 from poke_env.player import Player
 from poke_env.ps_client.account_configuration import AccountConfiguration
 
@@ -241,9 +241,15 @@ def battle_to_action_mask(battle: Battle) -> np.ndarray:
     """
     mask = np.zeros(9, dtype=bool)
 
+    switches = battle.available_switches[:N_SWITCH_SLOTS]
+    # Never voluntarily switch into a sleeping Pokémon in Gen 1 — sleep persists
+    # through switches and the switched-in mon wastes the turn. Fallback: allow
+    # sleeping switches if every available switch is asleep (no choice).
+    all_asleep = bool(switches) and all(p.status == Status.SLP for p in switches)
+
     if battle.force_switch:
-        for i, _ in enumerate(battle.available_switches[:N_SWITCH_SLOTS]):
-            mask[N_MOVE_SLOTS + i] = True
+        for i, p in enumerate(switches):
+            mask[N_MOVE_SLOTS + i] = (p.status != Status.SLP) or all_asleep
         return mask
 
     # Move slots — map available_moves back to their alphabetical slot index.
@@ -255,9 +261,9 @@ def battle_to_action_mask(battle: Battle) -> np.ndarray:
         if _clean(m) in available_ids:
             mask[i] = True
 
-    # Switch slots
-    for i, _ in enumerate(battle.available_switches[:N_SWITCH_SLOTS]):
-        mask[N_MOVE_SLOTS + i] = True
+    # Switch slots — exclude sleeping bench Pokémon
+    for i, p in enumerate(switches):
+        mask[N_MOVE_SLOTS + i] = (p.status != Status.SLP) or all_asleep
 
     # Emergency fallback — should never be needed
     if not mask.any():
