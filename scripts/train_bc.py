@@ -296,8 +296,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-steps",     type=int,   default=DEFAULTS["max_steps"])
     p.add_argument("--warmup-steps",  type=int,   default=DEFAULTS["warmup_steps"])
     p.add_argument("--seed",          type=int,   default=DEFAULTS["seed"])
-    p.add_argument("--switch-weight",  type=float, default=3.0,
-                   help="Loss weight for switch slots 4-8 (default: 3.0 to offset ~3:1 move/switch imbalance)")
+    p.add_argument("--switch-weight",  type=float, default=2.0,
+                   help="Loss weight for switch slots 4-8 (default: 2.0 — partial class-imbalance correction, biases toward moves in uncertain situations)")
     p.add_argument("--resume",        type=str,   default=None,
                    help="Path to a checkpoint to resume training from")
     p.add_argument("--finetune",      action="store_true",
