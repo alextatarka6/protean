@@ -357,9 +357,9 @@ def compute_reward(
     kos_dealt   = curr.opp_fainted  - prev.opp_fainted
     kos_taken   = curr.my_fainted   - prev.my_fainted
 
-    r = (-0.003                                           # per-step stall penalty
+    r = (-0.002                                           # per-step stall penalty (original proven value)
        + 0.01 * hp_dealt                                  # opponent HP loss
-       + 0.005 * hp_gained                                # own healing (halved so it can't cancel step cost)
+       + 0.001 * hp_gained                                # own healing (minimal — can't cancel step cost)
        + 0.005 * (gave_status - took_status)
        + 0.01  * (kos_dealt  - kos_taken))
 

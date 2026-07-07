@@ -154,12 +154,12 @@ Key implementation notes:
 - **Critic**: Shared trunk, separate `value_head: Linear(256→1)`, zero-init, gradient-stopped from trunk
 - **Reward** (dense, faithful to metamon Appendix E.1):
   ```
-  -0.003 (per-step) + 0.01*hp_dealt + 0.005*hp_gained + 0.005*(gave_status − took_status)
+  -0.002 (per-step) + 0.01*hp_dealt + 0.001*hp_gained + 0.005*(gave_status − took_status)
   + 0.01*(KOs_dealt − KOs_taken) + 1.0*victory
   ```
-  hp_gained coefficient halved (0.005) so a full recovery move (+0.0025) can't cancel
-  the step cost (-0.003). 100-turn game = -0.30 (tolerable), stall costs accumulate
-  without forcing reckless aggression. -0.01/step caused win rate collapse.
+  Original -0.002 step penalty restored (larger values caused policy to play recklessly fast,
+  diverge from BC, and perform worse than BC by ep16k). hp_gained coefficient reduced to 0.001
+  so healing (-0.002 + 0.001*0.5 = -0.0015/turn) can no longer cancel the step cost.
 - **KL penalty**: `β=0.01 * KL(π_RL ‖ π_BC)` — frozen BC checkpoint as anchor
 - **PPO hyperparameters**: clip ε=0.2, GAE γ=0.99 λ=0.95, 4 epochs/rollout, minibatch 256, lr=1e-4, vf_coef=0.1
 
