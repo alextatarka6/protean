@@ -214,6 +214,8 @@ Checkpoints saved every 500 episodes to `checkpoints/ppo_ep*.pt`. Final model: `
 - `scripts/eval_bc.py` — BC evaluation script (offline: accuracy on HF dataset)
 - `scripts/train_ppo.py` — PPO self-play training (Phase 4, complete)
 - `scripts/eval_rl.py` — live battle evaluation; modes: `--eval-bc`, `--checkpoint`, `--sweep`
+- `scripts/ladder.py` — play rated Gen1OU ladder on real PS server; requires `PS_USERNAME`/`PS_PASSWORD` env vars
+- `scripts/play_vs_agent.py` — human vs bot on local server
 - `scripts/start_server.sh` — start local Showdown server on port 8001
 - `.gitignore` — excludes `gen1ou_dataset*/`, `.venv/`, `__pycache__/`, `checkpoints/`
 

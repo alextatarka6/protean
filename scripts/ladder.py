@@ -34,6 +34,9 @@ from pathlib import Path
 from time import perf_counter
 
 import torch
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 

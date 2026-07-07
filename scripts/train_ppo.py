@@ -401,7 +401,7 @@ def train(args: argparse.Namespace) -> None:
             print(
                 f"ep {total_episodes:>6,} | "
                 f"win {win_rate:.3f} | "
-                f"rew {metrics['mean_reward']:+.2f} | "
+                f"rew {metrics['mean_reward']:+.4f} | "
                 f"pg {metrics['pg_loss']:+.4f} | "
                 f"vf {metrics['vf_loss']:.4f} | "
                 f"kl {metrics['kl_loss']:.4f} | "
