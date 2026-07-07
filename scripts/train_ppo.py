@@ -60,13 +60,9 @@ def get_device() -> torch.device:
 
 def make_batch(transitions: list[Transition], device: torch.device):
     """Stack a list of Transition objects into tensors."""
-    max_len = max(t.tokens.shape[0] for t in transitions)
-    token_arr = np.zeros((len(transitions), max_len), dtype=np.int32)
-    for i, t in enumerate(transitions):
-        token_arr[i, :t.tokens.shape[0]] = t.tokens
-
-    tokens   = torch.from_numpy(token_arr).long().to(device)
-    numbers  = torch.from_numpy(np.stack([t.numbers     for t in transitions])).float().to(device)
+    # tokens is (K, T) per transition → stack to (B, K, T)
+    tokens   = torch.from_numpy(np.stack([t.tokens  for t in transitions])).long().to(device)
+    numbers  = torch.from_numpy(np.stack([t.numbers for t in transitions])).float().to(device)
     masks    = torch.from_numpy(np.stack([t.action_mask for t in transitions])).bool().to(device)
     actions  = torch.tensor([t.action   for t in transitions], dtype=torch.long,  device=device)
     old_lps  = torch.tensor([t.log_prob for t in transitions], dtype=torch.float, device=device)
@@ -168,13 +164,16 @@ def ppo_update(
             # Value function loss (MSE against GAE returns)
             vf_loss = F.mse_loss(new_values.squeeze(-1), b_returns)
 
-            # KL penalty vs frozen BC policy
+            # KL penalty vs frozen BC policy.
+            # BC was trained on single-turn obs, so use encode_turn_only() for both
+            # models — this compares their single-turn reasoning, not trajectory context.
             with torch.no_grad():
-                bc_log_probs, _ = bc_model(b_tokens, b_numbers, b_masks)
+                bc_log_probs, _ = bc_model.encode_turn_only(b_tokens, b_numbers, b_masks)
+            rl_curr_lps, _ = model.encode_turn_only(b_tokens, b_numbers, b_masks)
             # KL(π_RL ‖ π_BC) = Σ π_RL * (log π_RL - log π_BC)
             # Masked slots have log_prob = -inf → prob = 0; use where() to avoid 0*nan
-            probs = log_probs.exp()
-            kl_elementwise = probs * (log_probs - bc_log_probs)
+            probs = rl_curr_lps.exp()
+            kl_elementwise = probs * (rl_curr_lps - bc_log_probs)
             kl_loss = torch.where(
                 probs > 1e-10,
                 kl_elementwise,
@@ -259,7 +258,7 @@ def train(args: argparse.Namespace) -> None:
     # Load BC checkpoint → learner model
     print(f"Loading BC checkpoint: {args.bc_checkpoint}")
     ckpt = torch.load(args.bc_checkpoint, map_location=device)
-    learner_model = Gen1OUPolicy(vocab_size=tokenizer.vocab_size).to(device)
+    learner_model = Gen1OUPolicy(vocab_size=tokenizer.vocab_size, history_len=args.history_len).to(device)
     missing, unexpected = learner_model.load_state_dict(ckpt["model"], strict=False)
     if missing:
         print(f"  New keys (randomly initialised): {missing}")
@@ -269,7 +268,7 @@ def train(args: argparse.Namespace) -> None:
     print(f"  BC step: {ckpt.get('step', '?')}")
 
     # Frozen BC reference for KL penalty
-    bc_model = Gen1OUPolicy(vocab_size=tokenizer.vocab_size).to(device)
+    bc_model = Gen1OUPolicy(vocab_size=tokenizer.vocab_size, history_len=args.history_len).to(device)
     bc_model.load_state_dict(ckpt["model"], strict=False)
     for p in bc_model.parameters():
         p.requires_grad_(False)
@@ -289,7 +288,7 @@ def train(args: argparse.Namespace) -> None:
 
     # Opponent model (lagged copy of learner) — sync after resume so it starts
     # from the correct weights (PPO if resuming, BC if starting fresh).
-    opponent_model = Gen1OUPolicy(vocab_size=tokenizer.vocab_size).to(device)
+    opponent_model = Gen1OUPolicy(vocab_size=tokenizer.vocab_size, history_len=args.history_len).to(device)
     sync_opponent(learner_model, opponent_model)
     opponent_model.eval()
 
@@ -310,6 +309,7 @@ def train(args: argparse.Namespace) -> None:
             sample=True,
             username=f"Protean_L{i}",
             team=ALL_TEAMS[i % n_teams],
+            history_len=args.history_len,
         )
         for i in range(n_envs)
     ]
@@ -321,6 +321,7 @@ def train(args: argparse.Namespace) -> None:
             sample=True,
             username=f"Protean_O{i}",
             team=ALL_TEAMS[(i + 1) % n_teams],
+            history_len=args.history_len,
         )
         for i in range(n_envs)
     ]
@@ -460,6 +461,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--lr",             type=float, default=1e-4)
     p.add_argument("--opponent-sync-interval", type=int, default=20,
                    help="Sync self-play opponent weights to learner every N episodes (default: 20)")
+    p.add_argument("--history-len", type=int, default=10,
+                   help="Turns of battle history passed to model (default: 10)")
     p.add_argument("--checkpoint-interval",    type=int, default=500)
     return p.parse_args()
 

@@ -89,14 +89,14 @@ SHOWDOWN_SERVER = ShowdownServerConfiguration
 @dataclass
 class Transition:
     """One step of experience from a single agent in a single battle."""
-    tokens:     np.ndarray   # int32 (T,)
-    numbers:    np.ndarray   # float32 (48,)
-    action_mask: np.ndarray  # bool (9,)
-    action:     int          # chosen slot index
-    log_prob:   float        # log π(a|s) at time of action
-    value:      float        # V(s) at time of action
-    reward:     float        # shaped reward for this step
-    done:       bool         # True on the final step of the battle
+    tokens:      np.ndarray   # int32 (K, T) — K-turn history window, zero-padded
+    numbers:     np.ndarray   # float32 (K, 48)
+    action_mask: np.ndarray   # bool (9,)
+    action:      int          # chosen slot index
+    log_prob:    float        # log π(a|s) at time of action
+    value:       float        # V(s) at time of action
+    reward:      float        # shaped reward for this step
+    done:        bool         # True on the final step of the battle
 
 
 # ---------------------------------------------------------------------------
@@ -393,6 +393,7 @@ class Gen1OUPlayer(Player):
         battle_format:        str  = "gen1ou",
         team:                 str | None = None,
         server_configuration: ServerConfiguration = None,
+        history_len:          int = 10,
         **kwargs,
     ):
         # ALL instance attributes must be set before super().__init__() because
@@ -403,11 +404,12 @@ class Gen1OUPlayer(Player):
         # object and raise AttributeError.
         self._team = None
 
-        self.model   = model
-        self.device  = device
-        self.sample  = sample
-        self.verbose = verbose
-        self._tokenizer = get_tokenizer()
+        self.model       = model
+        self.device      = device
+        self.sample      = sample
+        self.verbose     = verbose
+        self.history_len = history_len
+        self._tokenizer  = get_tokenizer()
         self._server_cfg = server_configuration or LOCAL_SERVER
 
         # Per-battle state tracking
@@ -417,6 +419,8 @@ class Gen1OUPlayer(Player):
         # Set of opp move IDs seen so far; used to detect newly revealed moves
         self._opp_moves_seen: dict[str, set[str]]     = {}
         self._pending:        dict[str, Transition]   = {}  # step waiting for next reward
+        # Rolling observation history per battle: list of (token_ids, numbers) tuples
+        self._obs_history:    dict[str, list]         = {}
 
         # Completed transitions ready for PPO
         # _lock guards _buffer and _pending across the main thread (drain_buffer)
@@ -446,18 +450,37 @@ class Gen1OUPlayer(Player):
         prev_my_move  = self._prev_my_move.get(battle_id, "")
         prev_opp_move = self._prev_opp_move.get(battle_id, "")
 
-        # Build observation
+        # Build observation for this turn
         obs  = battle_to_obs(battle, prev_my_move, prev_opp_move)
         mask = battle_to_action_mask(battle)
 
         token_ids = self._tokenizer.tokenize(str(obs["text"]))
-        tokens  = torch.from_numpy(token_ids).long().unsqueeze(0).to(self.device)
-        numbers = torch.from_numpy(obs["numbers"]).float().unsqueeze(0).to(self.device)
-        amask   = torch.from_numpy(mask).bool().unsqueeze(0).to(self.device)
+        numbers   = obs["numbers"]
+
+        # Append to per-battle obs history and build K-turn window
+        if battle_id not in self._obs_history:
+            self._obs_history[battle_id] = []
+        self._obs_history[battle_id].append((token_ids, numbers))
+
+        K = self.history_len
+        T = token_ids.shape[0]
+        history  = self._obs_history[battle_id]
+        window   = history[-K:]        # last K turns (fewer at start of battle)
+        offset   = K - len(window)     # left-pad with zeros
+
+        token_hist = np.zeros((K, T),  dtype=np.int32)
+        num_hist   = np.zeros((K, 48), dtype=np.float32)
+        for i, (t, n) in enumerate(window):
+            token_hist[offset + i] = t
+            num_hist[offset + i]   = n
+
+        tokens_t  = torch.from_numpy(token_hist).long().unsqueeze(0).to(self.device)   # (1, K, T)
+        numbers_t = torch.from_numpy(num_hist).float().unsqueeze(0).to(self.device)    # (1, K, 48)
+        amask     = torch.from_numpy(mask).bool().unsqueeze(0).to(self.device)
 
         with torch.no_grad():
             if self.verbose:
-                log_probs_t, value_t = self.model(tokens, numbers, amask)
+                log_probs_t, value_t = self.model(tokens_t, numbers_t, amask)
                 probs_np = log_probs_t[0].exp().cpu().numpy()
                 if self.sample:
                     from torch.distributions import Categorical
@@ -471,7 +494,7 @@ class Gen1OUPlayer(Player):
                 value = float(value_t[0, 0].item())
             else:
                 action_idx, log_prob, value = self.model.act(
-                    tokens, numbers, amask, sample=self.sample
+                    tokens_t, numbers_t, amask, sample=self.sample
                 )
                 probs_np = None
 
@@ -513,8 +536,8 @@ class Gen1OUPlayer(Player):
         # Store pending transition (reward filled on next step or episode end)
         with self._lock:
             self._pending[battle_id] = Transition(
-                tokens=token_ids,
-                numbers=obs["numbers"],
+                tokens=token_hist,   # (K, T) history window
+                numbers=num_hist,    # (K, 48)
                 action_mask=mask,
                 action=action_idx,
                 log_prob=log_prob,
@@ -537,6 +560,7 @@ class Gen1OUPlayer(Player):
         self._prev_my_move.pop(battle_id, None)
         self._prev_opp_move.pop(battle_id, None)
         self._opp_moves_seen.pop(battle_id, None)
+        self._obs_history.pop(battle_id, None)
 
     # ------------------------------------------------------------------
     # Internal helpers
