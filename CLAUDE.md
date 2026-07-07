@@ -152,16 +152,15 @@ Key implementation notes:
 - **Environment**: Local Showdown server (`server/pokemon-showdown/`, port 8001) via poke-env 0.8.3.3
 - **Self-play**: 4 parallel battle pairs; opponent weights synced to learner every 50 episodes
 - **Critic**: Shared trunk, separate `value_head: Linear(256→1)`, zero-init, gradient-stopped from trunk
-- **Reward** (dense, faithful to metamon Appendix E.1):
+- **Reward** (matching metamon arXiv 2504.04395, Appendix E.1):
   ```
-  -0.002 (per-step) + 0.01*hp_dealt + 0.001*hp_gained + 0.005*(gave_status − took_status)
-  + 0.01*(KOs_dealt − KOs_taken) + 1.0*victory
+  1.0*hp_dealt + 1.0*hp_gained + 0.5*(gave_status − took_status)
+  + 1.0*(KOs_dealt − KOs_taken) ± 100.0 terminal
   ```
-  Original -0.002 step penalty restored (larger values caused policy to play recklessly fast,
-  diverge from BC, and perform worse than BC by ep16k). hp_gained coefficient reduced to 0.001
-  so healing (-0.002 + 0.001*0.5 = -0.0015/turn) can no longer cancel the step cost.
+  No per-step penalty — metamon omits it; step penalties destabilised all prior runs.
+  ±100 terminal dominates shaping so win/loss is the primary learning signal.
 - **KL penalty**: `β=0.01 * KL(π_RL ‖ π_BC)` — frozen BC checkpoint as anchor
-- **PPO hyperparameters**: clip ε=0.2, GAE γ=0.99 λ=0.95, 4 epochs/rollout, minibatch 256, lr=1e-4, vf_coef=0.1
+- **PPO hyperparameters**: clip ε=0.2, GAE γ=0.999 λ=0.95, 4 epochs/rollout, minibatch 256, lr=1e-4, vf_coef=0.1
 
 ### Key implementation gotchas (poke-env + MPS)
 - **All `Gen1OUPlayer` attrs must be set before `super().__init__()`** — poke-env starts the POKE_LOOP background thread partway through `Player.__init__`; any attribute not yet set when a battle message arrives raises `AttributeError`

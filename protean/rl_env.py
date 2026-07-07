@@ -337,24 +337,18 @@ def compute_reward(
     won:  Optional[bool],   # None if battle not yet finished
 ) -> float:
     """
-    Dense shaped reward faithful to the metamon paper (Appendix E.1).
-    All shaping terms are scaled to O(0.01)/turn so GAE returns stay in [-1.5, +1.5].
+    Dense shaped reward matching metamon (arXiv 2504.04395, Appendix E.1).
+    No per-step penalty — metamon omits it entirely and it proved destabilising.
+    Terminal ±1.0 dominates; shaping terms are light guidance only.
 
     Spec:
-        -0.003                          (per-step cost — discourages stalling)
-        0.01  * hp_dealt                (opponent HP loss)
-      + 0.005 * hp_gained               (own healing — halved so it can't cancel step cost)
-      + 0.005 * (gave_status − took_status)
-      + 0.01  * (KOs_dealt − KOs_taken)
-      + 1.0   * victory   (terminal, undiscounted)
+        1.0  * hp_dealt                 (opponent HP fraction lost, [0,1])
+      + 1.0  * hp_gained                (own HP fraction gained, [0,1])
+      + 0.5  * (gave_status − took_status)
+      + 1.0  * (KOs_dealt − KOs_taken)
+      + 100.0 * victory  (−100.0 for loss)
 
-    hp_dealt  = prev.opp_hp_total − curr.opp_hp_total  (positive = good)
-    hp_gained = curr.my_hp_total  − prev.my_hp_total   (positive = healing)
-
-    Key balance: a full recovery move (hp_gained=0.5) gives +0.0025, which is
-    less than the step cost (-0.003), so healing never cancels the stall penalty.
-    A 100-turn game costs -0.30 in step penalties — tolerable, not dominant vs ±1.0
-    terminal, so the policy can afford strategic long games without panic-rushing.
+    Metamon scales terminal ±100 so win/loss completely dominates shaping.
     """
     hp_dealt    = prev.opp_hp_total - curr.opp_hp_total  # positive = good
     hp_gained   = curr.my_hp_total  - prev.my_hp_total   # positive = good (healing)
@@ -363,16 +357,15 @@ def compute_reward(
     kos_dealt   = curr.opp_fainted  - prev.opp_fainted
     kos_taken   = curr.my_fainted   - prev.my_fainted
 
-    r = (-0.002                                           # per-step stall penalty (original proven value)
-       + 0.01 * hp_dealt                                  # opponent HP loss
-       + 0.001 * hp_gained                                # own healing (minimal — can't cancel step cost)
-       + 0.005 * (gave_status - took_status)
-       + 0.01  * (kos_dealt  - kos_taken))
+    r = (1.0 * hp_dealt
+       + 1.0 * hp_gained
+       + 0.5 * (gave_status - took_status)
+       + 1.0 * (kos_dealt  - kos_taken))
 
     if won is True:
-        r += 1.0
+        r += 100.0
     elif won is False:
-        r -= 1.0
+        r -= 100.0
 
     return float(r)
 

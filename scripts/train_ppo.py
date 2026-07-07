@@ -8,7 +8,7 @@ Design:
   - 4 learner players + 4 opponent players, all sharing the live model weights
   - Opponent weights synced to learner every --opponent-sync-interval episodes (default: 20)
   - Rollout buffer: --rollout-steps transitions across all agents
-  - GAE (γ=0.99, λ=0.95) for advantage estimation
+  - GAE (γ=0.999, λ=0.95) for advantage estimation
   - PPO clip ε=0.2, 4 epochs per rollout, minibatch 256
   - KL penalty β * KL(π_RL ‖ π_BC) anchors RL policy to BC knowledge
   - AdamW lr=1e-4, grad clip 1.0
@@ -449,7 +449,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--ppo-epochs",     type=int, default=4)
     p.add_argument("--minibatch-size", type=int, default=256)
     p.add_argument("--clip-eps",       type=float, default=0.2)
-    p.add_argument("--gamma",          type=float, default=0.99)
+    p.add_argument("--gamma",          type=float, default=0.999)
     p.add_argument("--gae-lambda",     type=float, default=0.95)
     p.add_argument("--vf-coef",        type=float, default=0.1,
                    help="Value function loss coefficient (lower = less value-head influence early)")
