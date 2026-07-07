@@ -28,6 +28,7 @@ import json
 import os
 import random
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -124,21 +125,27 @@ class LadderPlayer(Gen1OUPlayer):
         p = self.n_finished_battles
         result = "WIN " if battle.won else "LOSS"
         opp = battle.opponent_username or "?"
-        rating     = battle.rating
-        opp_rating = battle.opponent_rating
-        rating_str = f"  (rating: {rating})" if rating is not None else ""
-        print(f"  [{result}]  vs {opp:<20}  {w}W / {p - w}L  ({w / max(p, 1):.0%}){rating_str}")
+        print(f"  [{result}]  vs {opp:<20}  {w}W / {p - w}L  ({w / max(p, 1):.0%})", flush=True)
 
-        record = {
-            "timestamp":  datetime.now(timezone.utc).isoformat(),
-            "game":       p,
-            "won":        bool(battle.won),
-            "opponent":   opp,
-            "our_rating": rating,
-            "opp_rating": opp_rating,
-        }
-        with open(self._history_file, "a") as f:
-            f.write(json.dumps(record) + "\n")
+        # |raw| rating messages arrive after |win|, so delay the write to let
+        # poke-env parse them into battle.rating / battle.opponent_rating first.
+        def _write_record():
+            rating     = battle.rating
+            opp_rating = battle.opponent_rating
+            if rating is not None:
+                print(f"    rating: {rating}  opp: {opp_rating}", flush=True)
+            record = {
+                "timestamp":  datetime.now(timezone.utc).isoformat(),
+                "game":       p,
+                "won":        bool(battle.won),
+                "opponent":   opp,
+                "our_rating": rating,
+                "opp_rating": opp_rating,
+            }
+            with open(self._history_file, "a") as f:
+                f.write(json.dumps(record) + "\n")
+
+        threading.Timer(3.0, _write_record).start()
 
 
 def parse_args() -> argparse.Namespace:
