@@ -16,3 +16,42 @@
 {"timestamp": "2026-07-03T01:18:36.538902+00:00", "game": 9, "won": false, "opponent": "Bad_PSU", "our_rating": null, "opp_rating": null}
 {"timestamp": "2026-07-03T01:20:59.799339+00:00", "game": 10, "won": true, "opponent": "Siisosps", "our_rating": null, "opp_rating": null}
 {"timestamp": "2026-07-03T01:29:08.430193+00:00", "note": "retraining started \u2014 BC fine-tune (10k steps, bench status obs) + PPO from scratch"}
+{"timestamp": "2026-07-07T05:24:34.550961+00:00", "game": 1, "won": false, "opponent": "Business Executive", "our_rating": null, "opp_rating": null}
+{"timestamp": "2026-07-07T20:27:38.645873+00:00", "game": 1, "won": false, "opponent": "jooj777", "our_rating": 1125, "opp_rating": 1433}
+{"timestamp": "2026-07-07T20:36:38.463852+00:00", "game": 2, "won": true, "opponent": "tigereyehs", "our_rating": 1118, "opp_rating": 1407}
+{"timestamp": "2026-07-07T20:45:37.778137+00:00", "game": 3, "won": false, "opponent": "Lepizuf", "our_rating": 1160, "opp_rating": 1117}
+{"timestamp": "2026-07-07T20:49:54.202336+00:00", "game": 4, "won": false, "opponent": "tigereyehs", "our_rating": 1132, "opp_rating": 1409}
+{"timestamp": "2026-07-07T20:56:40.763872+00:00", "game": 5, "won": false, "opponent": "Wowkfbslsbf", "our_rating": 1124, "opp_rating": 1000}
+{"timestamp": "2026-07-07T21:02:24.638333+00:00", "game": 6, "won": false, "opponent": "sourcreme", "our_rating": 1090, "opp_rating": 1280}
+{"timestamp": "2026-07-07T21:07:24.433896+00:00", "game": 7, "won": true, "opponent": "Javelin328", "our_rating": 1078, "opp_rating": 1223}
+{"timestamp": "2026-07-07T21:10:27.937282+00:00", "game": 8, "won": false, "opponent": "Deadrooster", "our_rating": 1117, "opp_rating": 1395}
+{"timestamp": "2026-07-07T21:15:45.590801+00:00", "game": 9, "won": false, "opponent": "snikees", "our_rating": 1109, "opp_rating": 1062}
+{"timestamp": "2026-07-07T21:21:22.594082+00:00", "game": 10, "won": true, "opponent": "ryuzakiriver", "our_rating": 1081, "opp_rating": 1390}
+{"timestamp": "2026-07-07T21:24:58.967095+00:00", "game": 11, "won": false, "opponent": "Javelin328", "our_rating": 1129, "opp_rating": 1199}
+{"timestamp": "2026-07-07T21:28:01.134745+00:00", "game": 12, "won": false, "opponent": "RDLT1 Slakoth", "our_rating": 1109, "opp_rating": 1053}
+{"timestamp": "2026-07-07T21:32:03.317744+00:00", "game": 13, "won": true, "opponent": "Karkaliciousness", "our_rating": 1080, "opp_rating": 1264}
+{"timestamp": "2026-07-07T21:37:25.709980+00:00", "game": 14, "won": false, "opponent": "Jor6", "our_rating": 1122, "opp_rating": 1080}
+{"timestamp": "2026-07-07T21:41:51.458960+00:00", "game": 15, "won": true, "opponent": "bikinilini", "our_rating": 1094, "opp_rating": 1000}
+{"timestamp": "2026-07-07T21:45:35.234714+00:00", "game": 16, "won": false, "opponent": "steviestar ye", "our_rating": 1113, "opp_rating": 1106}
+{"timestamp": "2026-07-07T21:51:42.508490+00:00", "game": 17, "won": false, "opponent": "Dkmeester", "our_rating": 1087, "opp_rating": 1349}
+{"timestamp": "2026-07-07T21:58:25.452103+00:00", "game": 18, "won": true, "opponent": "lini104", "our_rating": 1079, "opp_rating": 1000}
+{"timestamp": "2026-07-07T22:00:23.512824+00:00", "game": 19, "won": true, "opponent": "rarerocker45", "our_rating": 1101, "opp_rating": 1181}
+{"timestamp": "2026-07-07T22:13:30.420186+00:00", "game": 1, "won": true, "opponent": "lini104", "our_rating": 1125, "opp_rating": 1051}
+{"timestamp": "2026-07-07T22:17:03.511970+00:00", "game": 2, "won": false, "opponent": "standard joeseph", "our_rating": 1145, "opp_rating": 1060}
+{"timestamp": "2026-07-07T22:22:32.421497+00:00", "game": 3, "won": false, "opponent": "maxine_10", "our_rating": 1114, "opp_rating": 1277}
+{"timestamp": "2026-07-07T22:33:16.026818+00:00", "game": 4, "won": true, "opponent": "EggFritts", "our_rating": 1100, "opp_rating": 1000}
+{"timestamp": "2026-07-07T22:40:41.254750+00:00", "game": 5, "won": false, "opponent": "sourcreme", "our_rating": 1118, "opp_rating": 1245}
+{"timestamp": "2026-07-07T22:46:19.549273+00:00", "game": 6, "won": true, "opponent": "Saucy Diaper", "our_rating": 1102, "opp_rating": 1053}
+{"timestamp": "2026-07-07T22:52:00.782743+00:00", "game": 7, "won": true, "opponent": "Cannaman426", "our_rating": 1123, "opp_rating": 1000}
+{"timestamp": "2026-07-07T22:54:33.772656+00:00", "game": 8, "won": true, "opponent": "rarerocker45", "our_rating": 1140, "opp_rating": 1200}
+{"timestamp": "2026-07-07T23:00:11.234181+00:00", "game": 9, "won": true, "opponent": "urkoom", "our_rating": 1169, "opp_rating": 1011}
+{"timestamp": "2026-07-07T23:04:46.586847+00:00", "game": 10, "won": false, "opponent": "SwitchKingEdd", "our_rating": 1183, "opp_rating": 1332}
+{"timestamp": "2026-07-07T23:09:16.207754+00:00", "game": 11, "won": false, "opponent": "pintomole12", "our_rating": 1168, "opp_rating": 1126}
+{"timestamp": "2026-07-07T23:13:45.280390+00:00", "game": 12, "won": false, "opponent": "urkoom", "our_rating": 1140, "opp_rating": 1006}
+{"timestamp": "2026-07-07T23:19:44.912492+00:00", "game": 13, "won": true, "opponent": "rarerocker45", "our_rating": 1106, "opp_rating": 1198}
+{"timestamp": "2026-07-07T23:23:08.809484+00:00", "game": 14, "won": false, "opponent": "mace8", "our_rating": 1137, "opp_rating": 1044}
+{"timestamp": "2026-07-07T23:26:23.780036+00:00", "game": 15, "won": false, "opponent": "rarerocker45", "our_rating": 1105, "opp_rating": 1173}
+{"timestamp": "2026-07-07T23:30:03.558486+00:00", "game": 16, "won": true, "opponent": "urkoom", "our_rating": 1085, "opp_rating": 1021}
+{"timestamp": "2026-07-07T23:32:05.270689+00:00", "game": 17, "won": true, "opponent": "Drake Seawood", "our_rating": 1107, "opp_rating": 1421}
+{"timestamp": "2026-07-07T23:38:56.618683+00:00", "game": 18, "won": true, "opponent": "mace8", "our_rating": 1150, "opp_rating": 1121}
+{"timestamp": "2026-07-07T23:45:21.966138+00:00", "game": 19, "won": false, "opponent": "carlosalreves", "our_rating": 1173, "opp_rating": 1113}

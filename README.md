@@ -30,7 +30,7 @@ source .venv/bin/activate
 ### 3. Play on the ladder
 
 ```bash
-python scripts/ladder.py --checkpoint checkpoints/ppo_ep0000500.pt
+python scripts/ladder.py --checkpoint test_checkpoints/ppo_ep0002500.pt
 ```
 
 Spectate live by searching the bot's username on the PS website.
@@ -39,7 +39,7 @@ Results are logged to `ladder_history.jsonl`.
 ### 4. Start the local server (for training/eval)
 
 ```bash
-./scripts/start_server.sh &
+./scripts/start_server.sh
 ```
 
 Server runs on port 8001 with auth disabled.
@@ -127,7 +127,7 @@ checkpoints/
 ## Model
 
 `Gen1OUPolicy` — 5.10M parameters, runs on MPS (Apple Silicon).
-Two-stage architecture matching metamon (arXiv 2504.04395):
+Two-stage Turn and Trajectory architecture:
 
 ```
 Stage 1 — Turn Encoder (shared weights across history):
@@ -158,7 +158,7 @@ Pokémon on both sides + bench HP + move power/accuracy.
 
 ---
 
-## Reward (metamon Appendix E.1)
+## Reward
 
 ```
 r = 1.0 * hp_dealt

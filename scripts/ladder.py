@@ -152,7 +152,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Play rated Gen1OU ladder on Pokémon Showdown")
     p.add_argument("--checkpoint", required=True,
                    help="Path to checkpoint (.pt)")
-    p.add_argument("--team",       default="standard",
+    p.add_argument("--team",       default="zam_egg_zap",
                    help="Team: standard/offensive/balanced/stall  (default: standard)")
     p.add_argument("--n-games",    type=int, default=10,
                    help="Number of ladder games to play  (default: 10)")
