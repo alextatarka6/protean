@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Protean — Gen1OU RL Agent</title>
 <meta name="description" content="A from-scratch RL agent for Pokémon Gen 1 OU: 194,715 real ladder battles, BC pretraining, PPO self-play, and live rated play on Showdown.">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9A%A1%3C/text%3E%3C/svg%3E">
+<link rel="icon" type="image/png" href="assets/063.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -32,7 +32,7 @@
   .navlinks a.active{color:var(--accent-light);background:rgba(145,132,217,.12);}
   .gh-link{margin-top:28px;display:block;text-align:center;text-decoration:none;font-size:13px;font-weight:500;color:var(--accent);border:1px solid var(--accent);border-radius:8px;padding:9px 0;}
 
-  main{padding:36px 40px;max-width:1000px;}
+  main{padding:36px 40px;max-width:1000px;margin:0 auto;width:100%;}
 
   .hero-row{display:flex;align-items:flex-start;justify-content:space-between;gap:32px;margin-bottom:32px;flex-wrap:wrap;}
   .hero-copy{max-width:460px;}
@@ -224,7 +224,7 @@
     </section>
 
     <footer>
-      <span>Not affiliated with Nintendo, Game Freak, or Smogon.</span>
+      <span>Not affiliated with Nintendo, Game Freak, or Smogon. Sprites © Nintendo / Creatures Inc. / GAME FREAK inc.</span>
       <span class="foot-links">
         <a href="https://github.com/alextatarka6/protean" target="_blank" rel="noopener">GitHub</a>
         <a href="https://huggingface.co/datasets/atatark2/protean-gen1ou" target="_blank" rel="noopener">HF Dataset</a>
@@ -237,7 +237,7 @@
 <script>
   // ---- Replay links: fill this in with real replay.pokemonshowdown.com URLs ----
   const REPLAYS = [
-    // { title: "vs. human — win", url: "https://replay.pokemonshowdown.com/gen1ou-XXXXXXXX" },
+    { title: "vs. human — loss", url: "https://replay.pokemonshowdown.com/gen1ou-2645599178?p2" },
   ];
   if (REPLAYS.length > 0) {
     document.querySelector('#replayBox p').style.display = 'none';
@@ -253,7 +253,7 @@
 
   // ---- Pipeline steps ----
   const pipeline = [
-    { n: 1, title: 'Raw replays', body: '194,715 Gen1OU battles pulled from the Showdown ladder replay archive.', detail: 'Source: jakegrigsby/metamon-raw-replays, shards 35 & 36. No rating filter — every skill level is in there.' },
+    { n: 1, title: 'Raw replays', body: '194,715 Gen1OU battles pulled from the Showdown ladder replay archive.', detail: 'Source: jakegrigsby/metamon-raw-replays, shards 35 & 36. No rating filter.' },
     { n: 2, title: 'Replay parser', body: 'Raw .log text gets parsed into structured, turn-by-turn battle state.', detail: 'HP, status, boosts, weather, side conditions, and both players’ actions, turn by turn.' },
     { n: 3, title: 'POV reconstruction', body: 'Spectator-view battles are split into two first-person perspectives.', detail: 'Moves and teammates the parser never sees get filled in by sampling real Smogon usage stats, not guessed at random.' },
     { n: 4, title: 'State encoder', body: 'Each turn becomes a 77-token board-state sentence plus a 48-dim numeric vector.', detail: 'Built on a 460-word vocabulary made specifically for Gen 1 OU.' },
