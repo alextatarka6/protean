@@ -35,8 +35,8 @@ from typing import Optional
 
 import numpy as np
 
-from protean.pokedex import get_base_stats, get_types, get_move_data
-from protean.tokenizer import get_tokenizer, _clean
+from protean.formats.gen1ou.pokedex import get_base_stats, get_types, get_move_data
+from protean.tokenizer import _clean
 
 # ---------------------------------------------------------------------------
 # Constants

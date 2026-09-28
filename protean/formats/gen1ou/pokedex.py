@@ -6,7 +6,7 @@ In Gen 1, Attack/Defense/Speed are standard, but there is only one Special stat
 gen1 Pokémon — we use spa as the canonical 'spc' value.
 
 Usage:
-    from protean.pokedex import get_base_stats, get_types
+    from protean.formats.gen1ou.pokedex import get_base_stats, get_types
     stats = get_base_stats("starmie")   # {"hp": 60, "atk": 75, "def": 85, "spc": 100, "spe": 115}
     types = get_types("starmie")        # ["water", "psychic"]
 """

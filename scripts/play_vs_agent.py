@@ -1,5 +1,5 @@
 """
-Play against a trained Gen1OU checkpoint in the terminal.
+Play against a trained checkpoint in the terminal (default format: gen1ou).
 
 The bot prints its policy distribution after each of its decisions so you can
 see what it was considering. Both you and the bot connect to the local Showdown
@@ -26,10 +26,9 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from protean.rl_env import Gen1OUPlayer, HumanPlayer
-from protean.model import Gen1OUPolicy
-from protean.tokenizer import get_tokenizer
-from protean.teams import get_team
+from protean.formats import FORMAT_NAMES, BattleFormat, get_format
+from protean.rl_env import ProteanPlayer, HumanPlayer
+from protean.model import ProteanPolicy
 
 
 def get_device() -> torch.device:
@@ -40,9 +39,9 @@ def get_device() -> torch.device:
     return torch.device("cpu")
 
 
-def load_model(path: str, device: torch.device) -> Gen1OUPolicy:
+def load_model(path: str, fmt: BattleFormat, device: torch.device) -> ProteanPolicy:
     ckpt = torch.load(path, map_location=device)
-    model = Gen1OUPolicy(vocab_size=get_tokenizer().vocab_size).to(device)
+    model = ProteanPolicy(**fmt.model_kwargs()).to(device)
     model.load_state_dict(ckpt["model"], strict=False)
     model.eval()
     ep = ckpt.get("episode", ckpt.get("step", "?"))
@@ -51,7 +50,8 @@ def load_model(path: str, device: torch.device) -> Gen1OUPolicy:
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Play against a Gen1OU checkpoint")
+    p = argparse.ArgumentParser(description="Play against a Protean checkpoint")
+    p.add_argument("--format",         default="gen1ou", choices=FORMAT_NAMES)
     p.add_argument("--checkpoint",     required=True,
                    help="Path to checkpoint (.pt) — BC or PPO")
     p.add_argument("--bot-team",       default="standard",
@@ -72,17 +72,20 @@ def main() -> None:
     device = get_device()
     print(f"Device: {device}")
 
-    model = load_model(args.checkpoint, device)
+    fmt   = get_format(args.format)
+    model = load_model(args.checkpoint, fmt, device)
 
-    bot = Gen1OUPlayer(
+    bot = ProteanPlayer(
+        fmt=fmt,
         model=model, device=device,
         sample=args.sample, verbose=True,
         username=args.bot_username,
-        team=get_team(args.bot_team),
+        team=fmt.get_team(args.bot_team),
     )
     human = HumanPlayer(
         username=args.human_username,
-        team=get_team(args.human_team),
+        team=fmt.get_team(args.human_team),
+        battle_format=fmt.name,
     )
 
     mode = "sample" if args.sample else "greedy"

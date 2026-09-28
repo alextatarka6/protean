@@ -1,5 +1,9 @@
 """
-Gen1OU policy network (BC pretraining + PPO fine-tuning).
+Policy network (BC pretraining + PPO fine-tuning), shared across battle formats.
+
+Format-dependent sizes (vocab, numbers_dim, n_actions, max_seq_len) come from
+BattleFormat.model_kwargs(); the module defaults are the gen1ou values so old
+checkpoints load unchanged. Diagram below shows gen1ou sizes.
 
 Architecture (two-stage, matching metamon):
 
@@ -21,8 +25,8 @@ Architecture (two-stage, matching metamon):
               │ value_head:  Linear(256→1) │  → scalar V(s) (for PPO)
               └─────────────────────────────┘
 
-forward() accepts (B, K, T) tokens and (B, K, 48) numbers.
-For backward compat, (B, T) / (B, 48) are treated as K=1.
+forward() accepts (B, K, T) tokens and (B, K, numbers_dim) numbers.
+For backward compat, (B, T) / (B, numbers_dim) are treated as K=1.
 
 encode_turn_only() bypasses the trajectory encoder — used for KL computation
 vs BC (which was trained on single-turn obs).
@@ -49,7 +53,7 @@ HISTORY_LEN   = 10    # turns of battle history
 TRAJ_LAYERS   = 2     # causal trajectory transformer depth
 
 
-class Gen1OUPolicy(nn.Module):
+class ProteanPolicy(nn.Module):
     def __init__(
         self,
         vocab_size:   int = VOCAB_SIZE,
@@ -156,7 +160,7 @@ class Gen1OUPolicy(nn.Module):
         return x[:, 0]  # CLS position
 
     def _encode_turn(self, tokens: torch.Tensor, numbers: torch.Tensor) -> torch.Tensor:
-        """(B, T), (B, 48) → (B, d_model) turn embedding."""
+        """(B, T), (B, numbers_dim) → (B, d_model) turn embedding."""
         text = self._encode_text(tokens)
         nums = self.numbers_proj(numbers)
         return self.mlp(torch.cat([text, nums], dim=-1))
@@ -178,12 +182,12 @@ class Gen1OUPolicy(nn.Module):
     def forward(
         self,
         tokens:      torch.Tensor,                 # (B, K, T) or (B, T)
-        numbers:     torch.Tensor,                 # (B, K, 48) or (B, 48)
-        action_mask: torch.Tensor | None = None,   # (B, 9) bool — True = valid
+        numbers:     torch.Tensor,                 # (B, K, numbers_dim) or (B, numbers_dim)
+        action_mask: torch.Tensor | None = None,   # (B, n_actions) bool — True = valid
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Returns (log_probs, value).
-          log_probs: (B, 9)
+          log_probs: (B, n_actions)
           value:     (B, 1)
 
         Accepts K-turn history (B, K, T) or single-turn (B, T) for BC compat.

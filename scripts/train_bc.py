@@ -1,5 +1,5 @@
 """
-Behavioural-cloning training for Gen1OUPolicy.
+Behavioural-cloning training for ProteanPolicy.
 
 Dataset: atatark2/protean-gen1ou (streamed from HuggingFace)
 Loss:    NLL with invalid actions masked to -inf before log-softmax
@@ -29,9 +29,9 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 # Project root on path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from protean.model import Gen1OUPolicy
-from protean.obs_space import Gen1OUObservationSpace, Gen1ActionSpace
-from protean.tokenizer import get_tokenizer
+from protean.formats import get_format
+from protean.formats.gen1ou.obs_space import Gen1OUObservationSpace, Gen1ActionSpace
+from protean.model import ProteanPolicy
 
 # ---------------------------------------------------------------------------
 # Config
@@ -160,10 +160,10 @@ def train(args: argparse.Namespace) -> None:
     device = get_device()
     print(f"Device: {device}")
 
-    tokenizer = get_tokenizer()
+    tokenizer = get_format("gen1ou").tokenizer
     print(f"Tokenizer vocab size: {tokenizer.vocab_size}")
 
-    model = Gen1OUPolicy(vocab_size=tokenizer.vocab_size).to(device)
+    model = ProteanPolicy(**get_format("gen1ou").model_kwargs()).to(device)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Parameters: {n_params:,} ({n_params/1e6:.1f}M)")
 
@@ -289,7 +289,7 @@ def train(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="BC training for Gen1OUPolicy")
+    p = argparse.ArgumentParser(description="BC training for ProteanPolicy")
     p.add_argument("--batch-size",    type=int,   default=DEFAULTS["batch_size"])
     p.add_argument("--lr",            type=float, default=DEFAULTS["lr"])
     p.add_argument("--weight-decay",  type=float, default=DEFAULTS["weight_decay"])

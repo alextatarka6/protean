@@ -61,7 +61,7 @@ from tqdm import tqdm
 from protean.backend.replay_parser.parser import parse_battle
 from protean.backend.replay_parser.types import BattlePokemon, POVReplay
 from protean.backend.usage_stats import load_format_stats
-from protean.pokedex import _clean as _clean_name
+from protean.formats.gen1ou.pokedex import _clean as _clean_name
 from protean.pov import reconstruct_both_povs
 
 FORMAT = "gen1ou"

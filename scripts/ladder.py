@@ -1,5 +1,5 @@
 """
-Play rated Gen1OU ladder games on the real Pokémon Showdown server.
+Play rated ladder games (default format: gen1ou) on the real Pokémon Showdown server.
 
 Credentials are read from environment variables PS_USERNAME and PS_PASSWORD.
 Register a bot account at https://play.pokemonshowdown.com first.
@@ -41,10 +41,9 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from protean.rl_env import Gen1OUPlayer, SHOWDOWN_SERVER
-from protean.model import Gen1OUPolicy
-from protean.tokenizer import get_tokenizer
-from protean.teams import get_team
+from protean.formats import FORMAT_NAMES, BattleFormat, get_format
+from protean.rl_env import ProteanPlayer, SHOWDOWN_SERVER
+from protean.model import ProteanPolicy
 
 from poke_env.environment import Battle
 
@@ -57,9 +56,9 @@ def get_device() -> torch.device:
     return torch.device("cpu")
 
 
-def load_model(path: str, device: torch.device) -> Gen1OUPolicy:
+def load_model(path: str, fmt: BattleFormat, device: torch.device) -> ProteanPolicy:
     ckpt = torch.load(path, map_location=device)
-    model = Gen1OUPolicy(vocab_size=get_tokenizer().vocab_size).to(device)
+    model = ProteanPolicy(**fmt.model_kwargs()).to(device)
     model.load_state_dict(ckpt["model"], strict=False)
     model.eval()
     ep = ckpt.get("episode", ckpt.get("step", "?"))
@@ -67,8 +66,8 @@ def load_model(path: str, device: torch.device) -> Gen1OUPolicy:
     return model
 
 
-class LadderPlayer(Gen1OUPlayer):
-    """Gen1OUPlayer that prints a result line and logs stats after each ladder battle."""
+class LadderPlayer(ProteanPlayer):
+    """ProteanPlayer that prints a result line and logs stats after each ladder battle."""
 
     def __init__(self, *args, history_file: str = "ladder_history.jsonl",
                  search_timeout: int = 120, **kwargs):
@@ -136,6 +135,7 @@ class LadderPlayer(Gen1OUPlayer):
                 print(f"    rating: {rating}  opp: {opp_rating}", flush=True)
             record = {
                 "timestamp":  datetime.now(timezone.utc).isoformat(),
+                "format":     self.fmt.name,
                 "game":       p,
                 "won":        bool(battle.won),
                 "opponent":   opp,
@@ -149,11 +149,12 @@ class LadderPlayer(Gen1OUPlayer):
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Play rated Gen1OU ladder on Pokémon Showdown")
+    p = argparse.ArgumentParser(description="Play rated ladder games on Pokémon Showdown")
+    p.add_argument("--format",     default="gen1ou", choices=FORMAT_NAMES)
     p.add_argument("--checkpoint", required=True,
                    help="Path to checkpoint (.pt)")
     p.add_argument("--team",       default="zam_egg_zap",
-                   help="Team: standard/offensive/balanced/stall  (default: standard)")
+                   help="Team name (ignored for random-battle formats)  (default: zam_egg_zap)")
     p.add_argument("--n-games",    type=int, default=10,
                    help="Number of ladder games to play  (default: 10)")
     p.add_argument("--username",   default=None,
@@ -182,15 +183,17 @@ def main() -> None:
 
     device = get_device()
     print(f"Device: {device}")
-    model = load_model(args.checkpoint, device)
+    fmt   = get_format(args.format)
+    model = load_model(args.checkpoint, fmt, device)
 
     player = LadderPlayer(
+        fmt=fmt,
         model=model,
         device=device,
         sample=args.sample,
         username=username,
         password=password,
-        team=get_team(args.team),
+        team=fmt.get_team(args.team),
         server_configuration=SHOWDOWN_SERVER,
         history_file=args.history_file,
         search_timeout=args.search_timeout,
@@ -198,7 +201,9 @@ def main() -> None:
 
     mode = "sample" if args.sample else "greedy"
     print(f"\nAccount:  {username}")
-    print(f"Team:     {args.team}")
+    print(f"Format:   {fmt.name}")
+    if fmt.needs_team:
+        print(f"Team:     {args.team}")
     print(f"Mode:     {mode}")
     print(f"Games:    {args.n_games}")
     print(f"\nSpectate: https://play.pokemonshowdown.com — search for '{username}'")
@@ -212,7 +217,7 @@ def main() -> None:
             print("Error: login timed out after 15 seconds. Check username/password.")
             sys.exit(1)
         time.sleep(0.1)
-    if player.next_team is None:
+    if fmt.needs_team and player.next_team is None:
         print("Error: no team set. Pass --team <name> to specify a team.")
         sys.exit(1)
     print(f"Logged in as {username}. Searching for games...\n")

@@ -30,12 +30,20 @@ protean/
     team_inference.py    # Fills unrevealed moves/team slots via usage stats sampling
     usage_stats.py       # MovesetStats, load_format_stats("gen1ou")
   pov.py                 # reconstruct_both_povs(battle, format_stats, rng) → (p1_pov, p2_pov)
-  pokedex.py             # get_base_stats(species), get_types(species), get_move_data(move)
-  tokenizer.py           # Gen1Tokenizer (460 tokens), get_tokenizer(), build_gen1ou_tokenizer()
-  obs_space.py           # Gen1OUObservationSpace, Gen1ActionSpace
-  model.py               # Gen1OUPolicy (5.10M params) — turn encoder + causal trajectory transformer
-  rl_env.py              # poke-env bridge: Gen1OUPlayer, battle_to_obs, compute_reward
-  teams.py               # 4 training teams + TEAM_STALL (eval only) + random_team() helper
+  tokenizer.py           # Tokenizer — format-agnostic word→id vocab (load/save/tokenize)
+  model.py               # ProteanPolicy (5.10M params for gen1ou) — turn encoder + causal trajectory transformer
+  rl_env.py              # ProteanPlayer (format-agnostic poke-env player), Transition, compute_reward
+  formats/
+    __init__.py          # get_format(name), FORMAT_NAMES — lazy registry
+    base.py              # BattleFormat ABC: tokenizer, battle_to_obs, action_mask, action_to_order,
+                         #   describe_action, teams, model_kwargs()
+    gen1ou/
+      format.py          # Gen1OUFormat — wires the pieces below together
+      obs_space.py       # Gen1OUObservationSpace (row_to_obs for dataset), Gen1ActionSpace
+      battle.py          # live poke-env Battle → obs / mask / order; to_id_str(None) patch
+      vocab.py           # build_gen1ou_tokenizer(), get_tokenizer() (460 tokens)
+      pokedex.py         # get_base_stats(species), get_types(species), get_move_data(move)
+      teams.py           # 4 training teams + TEAM_STALL (eval only) + random_team() helper
   data/
     gen1ou_vocab.json    # Pre-built 460-token vocabulary
 
@@ -110,14 +118,14 @@ At inference time, switching into sleeping bench Pokémon is hard-masked (sleep 
 
 ### Tokenizer
 - 460 tokens: special structural (`<player>`, `<move>`, `<bench_status>`, etc.), gen1 species, gen1 moves, types, statuses
-- `get_tokenizer()` loads from `protean/data/gen1ou_vocab.json`
+- `get_format("gen1ou").tokenizer` loads from `protean/data/gen1ou_vocab.json`
 - `tokenize(text)` → np.int32 array
 
 ---
 
 ## Model (Phase 3 — complete)
 
-**Architecture**: `Gen1OUPolicy` in `protean/model.py` — two-stage, matching metamon (arXiv 2504.04395).
+**Architecture**: `ProteanPolicy` in `protean/model.py` — two-stage, matching metamon (arXiv 2504.04395).
 
 ```
 Stage 1 — Turn Encoder (shared weights, runs once per turn in history):
@@ -180,13 +188,13 @@ Key implementation notes:
 - Ladder results (real PS server): ~50% win rate — vs-BC metric not a reliable proxy for human play
 
 ### Key implementation gotchas (poke-env + MPS)
-- **All `Gen1OUPlayer` attrs must be set before `super().__init__()`** — poke-env starts the POKE_LOOP background thread partway through `Player.__init__`; any attribute not yet set when a battle message arrives raises `AttributeError`
+- **All `ProteanPlayer` attrs must be set before `super().__init__()`** — poke-env starts the POKE_LOOP background thread partway through `Player.__init__`; any attribute not yet set when a battle message arrives raises `AttributeError`
 - **`threading.Lock` not `asyncio.Lock`** — `drain_buffer()` runs on the main thread; `choose_move` and `_battle_finished_callback` run on POKE_LOOP; they are on different event loops
 - **`-1e9` not `-inf` for action masking** — `log_softmax` backward on MPS produces NaN gradients through `-inf` inputs; `-1e9` underflows to 0 in float32 (identical forward behaviour) but has well-defined backward
 - **`ratio.clamp(max=10)` in PPO** — prevents `inf * 0 = nan` when a valid action collapses to near-zero probability
 - **Gradient norm guard** — `clip_grad_norm_` returns the pre-clip norm; if non-finite, skip `optimizer.step()` to avoid corrupting all weights
 - **`battle.available_moves` for turn-1 moves** — `active_pokemon.moves` is empty until a move is used; union with `available_moves` (always populated from server `|request|`) for correct slot mapping
-- **`to_id_str(None)` monkey-patch** — gen1 has no abilities; poke-env passes `None` to `to_id_str` which crashes iterating it; patched in `rl_env.py` before any poke-env Pokemon objects are created
+- **`to_id_str(None)` monkey-patch** — gen1 has no abilities; poke-env passes `None` to `to_id_str` which crashes iterating it; patched in `formats/gen1ou/battle.py` (imported by `get_format("gen1ou")`, which `ProteanPlayer.__init__` calls) before any poke-env Pokemon objects are created
 - **0.5s inter-iteration sleep** — gives POKE_LOOP time to finish server-side teardown before the next challenge is issued; prevents `|popup|You are already challenging someone` dropped challenges
 - **KL via `encode_turn_only()`** — BC was trained on single-turn (K=1) obs; passing K=10 to bc_model would use randomly-init traj weights; use current turn only for KL
 
@@ -215,9 +223,20 @@ Credentials loaded from `.env` (PS_USERNAME, PS_PASSWORD). Results logged to `la
 Gen1OU queues can be slow — use `--search-timeout 600` (10 min).
 
 ### Current observations
-- Bot incorrectly switches into sleeping bench Pokémon → **fixed** via hard action mask in `battle_to_action_mask()`
+- Bot incorrectly switches into sleeping bench Pokémon → **fixed** via hard action mask in `formats/gen1ou/battle.py:battle_to_action_mask()`
 - Rhydon teams are a weakness for zam_egg_zap — Exeggutor (the Rhydon answer) needs protecting; model hasn't yet learned to conserve HP for this matchup
 - vs-BC win rate (94% at ep500) does not translate directly to ladder win rate (~50%); need more diverse training signal
+
+---
+
+## Multi-format layout
+
+Format-specific code lives in `protean/formats/<format>/`; the model, player and PPO loop only talk to a `BattleFormat`.
+- Get one with `get_format("gen1ou")`; build a matching model with `ProteanPolicy(**fmt.model_kwargs())`
+- `train_ppo.py`, `eval_rl.py`, `ladder.py`, `play_vs_agent.py` take `--format` (default `gen1ou`)
+- `train_bc.py` / `eval_bc.py` are tied to the gen1ou HF dataset schema
+- To add a format: implement `BattleFormat` in `protean/formats/<name>/format.py`, add it to `_REGISTRY` in `protean/formats/__init__.py`
+- Random-battle formats set `needs_team = False`; `training_teams()` returns `[]` and players get `team=None`
 
 ---
 

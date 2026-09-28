@@ -1,5 +1,5 @@
 """
-PPO self-play fine-tuning for Gen1OUPolicy.
+PPO self-play fine-tuning for ProteanPolicy (any registered --format, default gen1ou).
 
 Initialises from a BC checkpoint, then runs self-play battles on the local
 Showdown server (port 8001) to fine-tune with Proximal Policy Optimisation.
@@ -35,10 +35,9 @@ from torch.optim import AdamW
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from protean.model import Gen1OUPolicy
-from protean.rl_env import Gen1OUPlayer, Transition, LOCAL_SERVER
-from protean.tokenizer import get_tokenizer
-from protean.teams import ALL_TEAMS
+from protean.formats import FORMAT_NAMES, get_format
+from protean.model import ProteanPolicy
+from protean.rl_env import ProteanPlayer, Transition, LOCAL_SERVER
 
 CHECKPOINT_DIR = Path("checkpoints")
 
@@ -105,8 +104,8 @@ def compute_gae(
 # ---------------------------------------------------------------------------
 
 def ppo_update(
-    model:       Gen1OUPolicy,
-    bc_model:    Gen1OUPolicy,        # frozen BC reference for KL penalty
+    model:       ProteanPolicy,
+    bc_model:    ProteanPolicy,       # frozen BC reference for KL penalty
     optimizer:   AdamW,
     transitions: list[Transition],
     device:      torch.device,
@@ -228,8 +227,8 @@ def ppo_update(
 # ---------------------------------------------------------------------------
 
 async def run_battles(
-    learners:  list[Gen1OUPlayer],
-    opponents: list[Gen1OUPlayer],
+    learners:  list[ProteanPlayer],
+    opponents: list[ProteanPlayer],
     n_battles_each: int,
 ) -> None:
     """Run n_battles_each battles for each learner/opponent pair concurrently."""
@@ -240,7 +239,7 @@ async def run_battles(
     await asyncio.gather(*tasks)
 
 
-def sync_opponent(learner: Gen1OUPolicy, opponent: Gen1OUPolicy) -> None:
+def sync_opponent(learner: ProteanPolicy, opponent: ProteanPolicy) -> None:
     """Copy learner weights into the opponent model."""
     opponent.load_state_dict(copy.deepcopy(learner.state_dict()))
 
@@ -253,12 +252,13 @@ def train(args: argparse.Namespace) -> None:
     device = get_device()
     print(f"Device: {device}")
 
-    tokenizer = get_tokenizer()
+    fmt = get_format(args.format)
+    print(f"Format: {fmt.name}")
 
     # Load BC checkpoint → learner model
     print(f"Loading BC checkpoint: {args.bc_checkpoint}")
     ckpt = torch.load(args.bc_checkpoint, map_location=device)
-    learner_model = Gen1OUPolicy(vocab_size=tokenizer.vocab_size, history_len=args.history_len).to(device)
+    learner_model = ProteanPolicy(**fmt.model_kwargs(), history_len=args.history_len).to(device)
     missing, unexpected = learner_model.load_state_dict(ckpt["model"], strict=False)
     if missing:
         print(f"  New keys (randomly initialised): {missing}")
@@ -268,7 +268,7 @@ def train(args: argparse.Namespace) -> None:
     print(f"  BC step: {ckpt.get('step', '?')}")
 
     # Frozen BC reference for KL penalty
-    bc_model = Gen1OUPolicy(vocab_size=tokenizer.vocab_size, history_len=args.history_len).to(device)
+    bc_model = ProteanPolicy(**fmt.model_kwargs(), history_len=args.history_len).to(device)
     bc_model.load_state_dict(ckpt["model"], strict=False)
     for p in bc_model.parameters():
         p.requires_grad_(False)
@@ -288,7 +288,7 @@ def train(args: argparse.Namespace) -> None:
 
     # Opponent model (lagged copy of learner) — sync after resume so it starts
     # from the correct weights (PPO if resuming, BC if starting fresh).
-    opponent_model = Gen1OUPolicy(vocab_size=tokenizer.vocab_size, history_len=args.history_len).to(device)
+    opponent_model = ProteanPolicy(**fmt.model_kwargs(), history_len=args.history_len).to(device)
     sync_opponent(learner_model, opponent_model)
     opponent_model.eval()
 
@@ -299,28 +299,30 @@ def train(args: argparse.Namespace) -> None:
     # to preserve diverse, generalizable training signal and anchor the policy
     # to human-quality play.  The rest use the lagged self-play opponent.
     n_envs    = args.n_envs
-    n_teams   = len(ALL_TEAMS)
+    teams     = fmt.training_teams()   # empty for random-battle formats
     n_bc_opps = max(0, round(n_envs * args.bc_opponent_frac))
 
     learners = [
-        Gen1OUPlayer(
+        ProteanPlayer(
+            fmt=fmt,
             model=learner_model,
             device=device,
             sample=True,
             username=f"Protean_L{i}",
-            team=ALL_TEAMS[i % n_teams],
+            team=teams[i % len(teams)] if teams else None,
             history_len=args.history_len,
         )
         for i in range(n_envs)
     ]
     opponents = [
-        Gen1OUPlayer(
+        ProteanPlayer(
+            fmt=fmt,
             # First n_bc_opps slots use frozen BC; remainder use lagged self-play.
             model=bc_model if i < n_bc_opps else opponent_model,
             device=device,
             sample=True,
             username=f"Protean_O{i}",
-            team=ALL_TEAMS[(i + 1) % n_teams],
+            team=teams[(i + 1) % len(teams)] if teams else None,
             history_len=args.history_len,
         )
         for i in range(n_envs)
@@ -437,7 +439,8 @@ def train(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="PPO self-play for Gen1OUPolicy")
+    p = argparse.ArgumentParser(description="PPO self-play for ProteanPolicy")
+    p.add_argument("--format",         type=str, default="gen1ou", choices=FORMAT_NAMES)
     p.add_argument("--bc-checkpoint",  type=str, required=True,
                    help="Path to BC .pt checkpoint to initialise from")
     p.add_argument("--resume",         type=str, default=None,

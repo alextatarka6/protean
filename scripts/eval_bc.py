@@ -28,9 +28,9 @@ from datasets import load_dataset
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from protean.model import Gen1OUPolicy
-from protean.obs_space import Gen1OUObservationSpace, Gen1ActionSpace
-from protean.tokenizer import get_tokenizer
+from protean.formats import get_format
+from protean.formats.gen1ou.obs_space import Gen1OUObservationSpace, Gen1ActionSpace
+from protean.model import ProteanPolicy
 
 DATASET_REPO = "atatark2/protean-gen1ou"
 N_ACTIONS    = 9
@@ -53,13 +53,13 @@ def evaluate(args: argparse.Namespace) -> None:
     device = get_device()
     print(f"Device: {device}")
 
-    tokenizer    = get_tokenizer()
+    tokenizer    = get_format("gen1ou").tokenizer
     obs_space    = Gen1OUObservationSpace()
     action_space = Gen1ActionSpace()
 
     # Load model
     ckpt = torch.load(args.checkpoint, map_location=device)
-    model = Gen1OUPolicy(vocab_size=tokenizer.vocab_size).to(device)
+    model = ProteanPolicy(**get_format("gen1ou").model_kwargs()).to(device)
     model.load_state_dict(ckpt["model"])
     model.eval()
     trained_step = ckpt.get("step", "?")

@@ -1,9 +1,10 @@
 """
-RL environment wrapper for Gen1OU self-play via poke-env.
+RL environment wrapper for self-play via poke-env. Format-agnostic: everything
+format-specific (obs encoding, action slots, vocab) comes from a BattleFormat.
 
-Gen1OUPlayer
+ProteanPlayer
   Subclasses poke-env's Player. Overrides choose_move() to:
-    1. Convert the live Battle object to our obs format
+    1. Convert the live Battle object to the format's obs
     2. Run the policy model to select an action
     3. Translate the slot index back to a Showdown move/switch order
     4. Record the (obs, action, log_prob, value, reward) transition
@@ -12,8 +13,9 @@ The rollout buffer is filled across multiple concurrent battles and drained
 by the PPO training loop.
 
 Usage:
-    player = Gen1OUPlayer(model=model, format_stats=stats, device=device)
-    opponent = Gen1OUPlayer(model=opponent_model, format_stats=stats, device=device)
+    fmt      = get_format("gen1ou")
+    player   = ProteanPlayer(fmt=fmt, model=model, device=device)
+    opponent = ProteanPlayer(fmt=fmt, model=opponent_model, device=device)
     await player.battle_against(opponent, n_battles=N)
     transitions = player.drain_buffer()
 """
@@ -21,7 +23,6 @@ from __future__ import annotations
 
 import asyncio
 import copy
-import json
 import logging
 import threading
 from dataclasses import dataclass, field
@@ -40,34 +41,12 @@ logging.getLogger().addFilter(_StallFilter())
 
 import numpy as np
 import torch
-from poke_env.environment import Battle, Move, Pokemon, Status
+from poke_env.environment import Battle
 from poke_env.player import Player
 from poke_env.ps_client.account_configuration import AccountConfiguration
 
-# ---------------------------------------------------------------------------
-# poke-env 0.8.x compatibility patch
-# to_id_str() crashes on None ability (gen1 has no abilities). Patch it to
-# return "" for None before any poke-env code runs.
-# ---------------------------------------------------------------------------
-import poke_env.data.normalize as _poke_norm
-import poke_env.environment.pokemon as _poke_pk
-
-_orig_to_id_str = _poke_norm.to_id_str
-
-def _safe_to_id_str(name):  # type: ignore[override]
-    if name is None:
-        return ""
-    return _orig_to_id_str(name)
-
-_poke_norm.to_id_str = _safe_to_id_str
-_poke_pk.to_id_str   = _safe_to_id_str   # patch the already-imported ref
-
-from protean.obs_space import (
-    Gen1OUObservationSpace, Gen1ActionSpace,
-    _sorted_moves, _clean, _build_obs, _norm_conditions,
-    N_MOVE_SLOTS, N_SWITCH_SLOTS,
-)
-from protean.tokenizer import get_tokenizer
+from protean.formats import BattleFormat, get_format
+from protean.tokenizer import _clean
 
 # ---------------------------------------------------------------------------
 # Server configuration helper
@@ -90,217 +69,13 @@ SHOWDOWN_SERVER = ShowdownServerConfiguration
 class Transition:
     """One step of experience from a single agent in a single battle."""
     tokens:      np.ndarray   # int32 (K, T) — K-turn history window, zero-padded
-    numbers:     np.ndarray   # float32 (K, 48)
-    action_mask: np.ndarray   # bool (9,)
+    numbers:     np.ndarray   # float32 (K, numbers_dim)
+    action_mask: np.ndarray   # bool (n_actions,)
     action:      int          # chosen slot index
     log_prob:    float        # log π(a|s) at time of action
     value:       float        # V(s) at time of action
     reward:      float        # shaped reward for this step
     done:        bool         # True on the final step of the battle
-
-
-# ---------------------------------------------------------------------------
-# Observation bridge: poke-env Battle → our obs format
-# ---------------------------------------------------------------------------
-
-_obs_space    = Gen1OUObservationSpace()
-_action_space = Gen1ActionSpace()
-
-_STATUS_MAP = {
-    "brn": "brn",
-    "par": "par",
-    "slp": "slp",
-    "frz": "frz",
-    "psn": "psn",
-    "tox": "tox",
-    None:  "",
-}
-
-
-def _poke_status(pokemon: Pokemon) -> str:
-    if pokemon.status is None:
-        return ""
-    return _STATUS_MAP.get(pokemon.status.name.lower(), pokemon.status.name.lower())
-
-
-def _poke_boosts(pokemon: Pokemon) -> dict[str, int]:
-    # poke-env stores boosts as a dict keyed by stat name strings
-    return dict(pokemon.boosts) if hasattr(pokemon, "boosts") else {}
-
-
-def _pk_to_bench_dict(pokemon: Pokemon) -> dict:
-    return {
-        "species":        _clean(pokemon.species),
-        "hp":             float(pokemon.current_hp_fraction),
-        "status":         _poke_status(pokemon),
-        "fainted":        pokemon.fainted,
-        "revealed_moves": [_clean(m) for m in pokemon.moves],
-    }
-
-
-def _known_moves(battle: Battle) -> list[str]:
-    """
-    Return all currently known move IDs for the active pokemon.
-
-    poke-env populates battle.active_pokemon.moves only as moves are *used*,
-    so on turn 1 it may be empty. battle.available_moves always contains the
-    moves available *this turn* from the server's |request| message.
-    Union the two so we always have the full move set once all 4 are revealed.
-    """
-    active = battle.active_pokemon
-    known: set[str] = set(active.moves.keys()) if active else set()
-    if not battle.force_switch:
-        known |= {_clean(m.id) for m in battle.available_moves}
-    return _sorted_moves(list(known))
-
-
-def battle_to_obs(
-    battle: Battle,
-    prev_my_move:  str = "",
-    prev_opp_move: str = "",
-) -> dict[str, np.ndarray]:
-    """
-    Convert a live poke-env Battle to our observation format.
-
-    Own team: all moves are known (it's our team) — no inference needed.
-    Opponent: only revealed information is used (no inference during play;
-    the obs format handles unknown moves gracefully via <blank> tokens).
-    """
-    my_active  = battle.active_pokemon
-    opp_active = battle.opponent_active_pokemon
-
-    # --- my active ---
-    my_species  = _clean(my_active.species) if my_active else "missingno"
-    my_hp       = float(my_active.current_hp_fraction) if my_active else 1.0
-    my_status   = _poke_status(my_active) if my_active else ""
-    my_boosts   = _poke_boosts(my_active) if my_active else {}
-    # Union observed moves with available_moves so turn-1 moves are always visible
-    my_moves    = _known_moves(battle)
-
-    # --- my bench ---
-    my_bench = [
-        _pk_to_bench_dict(p)
-        for p in battle.team.values()
-        if not p.active and not p.fainted
-    ]
-
-    # --- opponent active ---
-    opp_species = _clean(opp_active.species) if opp_active else "missingno"
-    opp_hp      = float(opp_active.current_hp_fraction) if opp_active else 1.0
-    opp_status  = _poke_status(opp_active) if opp_active else ""
-    opp_boosts  = _poke_boosts(opp_active) if opp_active else {}
-
-    # --- opponent bench (revealed only) ---
-    opp_bench = [
-        _pk_to_bench_dict(p)
-        for p in battle.opponent_team.values()
-        if not p.active and not p.fainted
-    ]
-
-    opp_remaining = sum(
-        1 for p in battle.opponent_team.values() if not p.fainted
-    )
-
-    # --- field ---
-    # battle.weather is a Weather enum or None
-    weather   = battle.weather.name.lower() if battle.weather else ""
-    # side_conditions is a dict {SideCondition: int}
-    my_conds  = json.dumps([c.name.lower() for c in battle.side_conditions])
-    opp_conds = json.dumps([c.name.lower() for c in battle.opponent_side_conditions])
-
-    # --- forced switch ---
-    forced = battle.force_switch
-
-    return _build_obs(
-        my_active_species=my_species,
-        my_active_hp=my_hp,
-        my_active_status=my_status,
-        my_active_boosts=my_boosts,
-        my_active_moves=my_moves,
-        my_bench=my_bench,
-        opp_active_species=opp_species,
-        opp_active_hp=opp_hp,
-        opp_active_status=opp_status,
-        opp_active_boosts=opp_boosts,
-        opp_bench=opp_bench,
-        opp_remaining=opp_remaining,
-        weather=weather,
-        my_conditions=_norm_conditions(my_conds),
-        opp_conditions=_norm_conditions(opp_conds),
-        prev_my_move=prev_my_move,
-        prev_opp_move=prev_opp_move,
-        forced_switch=forced,
-    )
-
-
-def battle_to_action_mask(battle: Battle) -> np.ndarray:
-    """
-    Build the 9-slot boolean action mask from the live battle state.
-    Slots 0-3: available moves (alphabetically ordered against full moveset).
-    Slots 4-8: available switches.
-    """
-    mask = np.zeros(9, dtype=bool)
-
-    switches = battle.available_switches[:N_SWITCH_SLOTS]
-    # Never voluntarily switch into a sleeping Pokémon in Gen 1 — sleep persists
-    # through switches and the switched-in mon wastes the turn. Fallback: allow
-    # sleeping switches if every available switch is asleep (no choice).
-    all_asleep = bool(switches) and all(p.status == Status.SLP for p in switches)
-
-    if battle.force_switch:
-        for i, p in enumerate(switches):
-            mask[N_MOVE_SLOTS + i] = (p.status != Status.SLP) or all_asleep
-        return mask
-
-    # Move slots — map available_moves back to their alphabetical slot index.
-    # Use _known_moves() which unions active_pokemon.moves with available_moves
-    # so slot assignment is correct even on turn 1 when no moves have been used.
-    all_moves_sorted = _known_moves(battle)
-    available_ids    = {_clean(m.id) for m in battle.available_moves}
-    for i, m in enumerate(all_moves_sorted[:N_MOVE_SLOTS]):
-        if _clean(m) in available_ids:
-            mask[i] = True
-
-    # Switch slots — exclude sleeping bench Pokémon
-    for i, p in enumerate(switches):
-        mask[N_MOVE_SLOTS + i] = (p.status != Status.SLP) or all_asleep
-
-    # Emergency fallback — should never be needed
-    if not mask.any():
-        mask[0] = True
-
-    return mask
-
-
-def action_idx_to_order(idx: int, battle: Battle):
-    """
-    Convert a 9-slot action index to a poke-env BattleOrder.
-    Move slots 0-3 map to the active pokemon's alphabetically-sorted moves.
-    Switch slots 4-8 map to available_switches in the order poke-env provides.
-    """
-
-    if idx < N_MOVE_SLOTS:
-        sorted_moves = _known_moves(battle)
-        if idx < len(sorted_moves):
-            move_id = sorted_moves[idx]
-            for m in battle.available_moves:
-                if _clean(m.id) == _clean(move_id):
-                    return Player.create_order(m)
-        # Fallback — shouldn't happen if mask is correct
-        if battle.available_moves:
-            return Player.create_order(battle.available_moves[0])
-        if battle.available_switches:
-            return Player.create_order(battle.available_switches[0])
-
-    else:
-        switch_idx = idx - N_MOVE_SLOTS
-        switches = battle.available_switches
-        if switch_idx < len(switches):
-            return Player.create_order(switches[switch_idx])
-        if switches:
-            return Player.create_order(switches[0])
-
-    return Player.choose_default_move(battle)
 
 
 # ---------------------------------------------------------------------------
@@ -371,12 +146,12 @@ def compute_reward(
 
 
 # ---------------------------------------------------------------------------
-# Gen1OUPlayer
+# ProteanPlayer
 # ---------------------------------------------------------------------------
 
-class Gen1OUPlayer(Player):
+class ProteanPlayer(Player):
     """
-    poke-env Player that uses Gen1OUPolicy to choose moves.
+    poke-env Player that uses a ProteanPolicy to choose moves in any BattleFormat.
 
     Collects (obs, action, log_prob, value, reward, done) transitions into a
     buffer that the PPO loop drains after each rollout.
@@ -386,11 +161,11 @@ class Gen1OUPlayer(Player):
         self,
         model:                torch.nn.Module,
         device:               torch.device,
+        fmt:                  BattleFormat | str = "gen1ou",
         username:             str  = "ProteanBot",
         password:             str | None = None,
         sample:               bool = True,
         verbose:              bool = False,
-        battle_format:        str  = "gen1ou",
         team:                 str | None = None,
         server_configuration: ServerConfiguration = None,
         history_len:          int = 10,
@@ -404,12 +179,13 @@ class Gen1OUPlayer(Player):
         # object and raise AttributeError.
         self._team = None
 
+        self.fmt         = get_format(fmt) if isinstance(fmt, str) else fmt
         self.model       = model
         self.device      = device
         self.sample      = sample
         self.verbose     = verbose
         self.history_len = history_len
-        self._tokenizer  = get_tokenizer()
+        self._tokenizer  = self.fmt.tokenizer
         self._server_cfg = server_configuration or LOCAL_SERVER
 
         # Per-battle state tracking
@@ -433,7 +209,7 @@ class Gen1OUPlayer(Player):
         super().__init__(
             account_configuration=account_cfg,
             server_configuration=self._server_cfg,
-            battle_format=battle_format,
+            battle_format=self.fmt.name,
             max_concurrent_battles=1,
             team=team,
             **kwargs,
@@ -451,8 +227,8 @@ class Gen1OUPlayer(Player):
         prev_opp_move = self._prev_opp_move.get(battle_id, "")
 
         # Build observation for this turn
-        obs  = battle_to_obs(battle, prev_my_move, prev_opp_move)
-        mask = battle_to_action_mask(battle)
+        obs  = self.fmt.battle_to_obs(battle, prev_my_move, prev_opp_move)
+        mask = self.fmt.action_mask(battle)
 
         token_ids = self._tokenizer.tokenize(str(obs["text"]))
         numbers   = obs["numbers"]
@@ -469,13 +245,13 @@ class Gen1OUPlayer(Player):
         offset   = K - len(window)     # left-pad with zeros
 
         token_hist = np.zeros((K, T),  dtype=np.int32)
-        num_hist   = np.zeros((K, 48), dtype=np.float32)
+        num_hist   = np.zeros((K, self.fmt.numbers_dim), dtype=np.float32)
         for i, (t, n) in enumerate(window):
             token_hist[offset + i] = t
             num_hist[offset + i]   = n
 
         tokens_t  = torch.from_numpy(token_hist).long().unsqueeze(0).to(self.device)   # (1, K, T)
-        numbers_t = torch.from_numpy(num_hist).float().unsqueeze(0).to(self.device)    # (1, K, 48)
+        numbers_t = torch.from_numpy(num_hist).float().unsqueeze(0).to(self.device)    # (1, K, numbers_dim)
         amask     = torch.from_numpy(mask).bool().unsqueeze(0).to(self.device)
 
         with torch.no_grad():
@@ -499,19 +275,13 @@ class Gen1OUPlayer(Player):
                 probs_np = None
 
         # Decode action → poke-env BattleOrder (needed to record move name below)
-        order = action_idx_to_order(action_idx, battle)
+        order = self.fmt.action_to_order(action_idx, battle)
 
         # Update prev-move tracking for next turn's obs context.
         # My move: decode the chosen slot back to a move/switch name.
-        if action_idx < N_MOVE_SLOTS:
-            sorted_moves = _known_moves(battle)
-            if action_idx < len(sorted_moves):
-                self._prev_my_move[battle_id] = sorted_moves[action_idx]
-        else:
-            switch_idx = action_idx - N_MOVE_SLOTS
-            switches = battle.available_switches
-            if switch_idx < len(switches):
-                self._prev_my_move[battle_id] = _clean(switches[switch_idx].species)
+        chosen = self.fmt.describe_action(action_idx, battle)
+        if chosen is not None:
+            self._prev_my_move[battle_id] = chosen[1]
 
         # Opponent's last move: poke-env doesn't expose this directly.
         # Detect it by comparing the opp's current revealed moves against the set we
@@ -537,7 +307,7 @@ class Gen1OUPlayer(Player):
         with self._lock:
             self._pending[battle_id] = Transition(
                 tokens=token_hist,   # (K, T) history window
-                numbers=num_hist,    # (K, 48)
+                numbers=num_hist,    # (K, numbers_dim)
                 action_mask=mask,
                 action=action_idx,
                 log_prob=log_prob,
@@ -569,16 +339,16 @@ class Gen1OUPlayer(Player):
     def _log_decision(
         self, battle: Battle, chosen: int, probs: np.ndarray, mask: np.ndarray
     ) -> None:
-        sorted_moves = _known_moves(battle)
-        switches     = battle.available_switches
-
         names: list[str] = []
-        for i in range(N_MOVE_SLOTS):
-            names.append(sorted_moves[i] if i < len(sorted_moves) else f"move{i}")
-        for i in range(N_SWITCH_SLOTS):
-            names.append(f">{_clean(switches[i].species)}" if i < len(switches) else f"sw{i}")
+        for i in range(self.fmt.n_actions):
+            desc = self.fmt.describe_action(i, battle)
+            if desc is None:
+                names.append(f"slot{i}")
+            else:
+                kind, value = desc
+                names.append(f">{value}" if kind == "switch" else value)
 
-        valid = [(names[i], probs[i], i == chosen) for i in range(9) if mask[i]]
+        valid = [(names[i], probs[i], i == chosen) for i in range(self.fmt.n_actions) if mask[i]]
         valid.sort(key=lambda x: -x[1])
 
         parts = [f"{'▶ ' if c else ''}{n}({p:.0%})" for n, p, c in valid]
@@ -708,11 +478,12 @@ class HumanPlayer(Player):
     Showdown browser UI at http://localhost:8001.
     """
 
-    def __init__(self, username: str = "Human", team: str | None = None):
+    def __init__(self, username: str = "Human", team: str | None = None,
+                 battle_format: str = "gen1ou"):
         super().__init__(
             account_configuration=AccountConfiguration(username, None),
             server_configuration=LOCAL_SERVER,
-            battle_format="gen1ou",
+            battle_format=battle_format,
             max_concurrent_battles=1,
             team=team,
         )

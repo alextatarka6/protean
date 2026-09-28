@@ -97,12 +97,12 @@ protean/
     team_inference.py # Fills unrevealed moves via usage stats sampling
     usage_stats.py    # MovesetStats, load_format_stats("gen1ou")
   pov.py             # reconstruct_both_povs → (p1_pov, p2_pov)
-  pokedex.py         # get_base_stats, get_types, get_move_data
-  tokenizer.py       # Gen1Tokenizer (460 tokens)
-  obs_space.py       # Gen1OUObservationSpace, Gen1ActionSpace
-  model.py           # Gen1OUPolicy (5.10M params) — turn encoder + trajectory transformer
-  rl_env.py          # poke-env bridge: Gen1OUPlayer, compute_reward
-  teams.py           # 4 training teams (standard, offensive, balanced, zam_egg_zap) + stall
+  tokenizer.py       # Tokenizer — format-agnostic vocab
+  model.py           # ProteanPolicy (5.10M params) — turn encoder + trajectory transformer
+  rl_env.py          # poke-env bridge: ProteanPlayer, compute_reward
+  formats/
+    base.py          # BattleFormat interface; get_format("gen1ou") registry in __init__.py
+    gen1ou/          # obs_space, live-battle bridge, vocab (460 tokens), pokedex, teams
 
 scripts/
   build_gen1ou_dataset.py  # Builds HF dataset from raw replays
@@ -126,7 +126,7 @@ checkpoints/
 
 ## Model
 
-`Gen1OUPolicy` — 5.10M parameters, runs on MPS (Apple Silicon).
+`ProteanPolicy` — 5.10M parameters, runs on MPS (Apple Silicon).
 Two-stage Turn and Trajectory architecture:
 
 ```

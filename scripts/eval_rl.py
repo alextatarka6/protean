@@ -45,12 +45,9 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-# rl_env must be imported before any other poke-env code (applies the
-# to_id_str(None) monkey-patch for gen1 ability handling).
-from protean.rl_env import Gen1OUPlayer, LOCAL_SERVER
-from protean.model import Gen1OUPolicy
-from protean.tokenizer import get_tokenizer
-from protean.teams import ALL_TEAMS
+from protean.formats import FORMAT_NAMES, BattleFormat, get_format
+from protean.rl_env import ProteanPlayer, LOCAL_SERVER
+from protean.model import ProteanPolicy
 
 from poke_env.player import RandomPlayer
 from poke_env.ps_client.account_configuration import AccountConfiguration
@@ -68,11 +65,10 @@ def get_device() -> torch.device:
     return torch.device("cpu")
 
 
-def load_model(checkpoint_path: str, device: torch.device,
-               verbose: bool = True) -> Gen1OUPolicy:
-    tokenizer = get_tokenizer()
+def load_model(checkpoint_path: str, fmt: BattleFormat, device: torch.device,
+               verbose: bool = True) -> ProteanPolicy:
     ckpt = torch.load(checkpoint_path, map_location=device)
-    model = Gen1OUPolicy(vocab_size=tokenizer.vocab_size).to(device)
+    model = ProteanPolicy(**fmt.model_kwargs()).to(device)
     model.load_state_dict(ckpt["model"], strict=False)
     model.eval()
     if verbose:
@@ -81,7 +77,7 @@ def load_model(checkpoint_path: str, device: torch.device,
     return model
 
 
-def swap_weights(model: Gen1OUPolicy, checkpoint_path: str,
+def swap_weights(model: ProteanPolicy, checkpoint_path: str,
                  device: torch.device) -> int:
     """Load weights from checkpoint into an existing model in-place.
     Returns the episode number stored in the checkpoint."""
@@ -91,11 +87,11 @@ def swap_weights(model: Gen1OUPolicy, checkpoint_path: str,
     return int(ckpt.get("episode", ckpt.get("step", 0)))
 
 
-def make_random_player(username: str, team: str) -> RandomPlayer:
+def make_random_player(username: str, fmt: BattleFormat, team: str | None) -> RandomPlayer:
     return RandomPlayer(
         account_configuration=AccountConfiguration(username, None),
         server_configuration=LOCAL_SERVER,
-        battle_format="gen1ou",
+        battle_format=fmt.name,
         team=team,
         max_concurrent_battles=1,
     )
@@ -125,6 +121,12 @@ def run_and_measure(player, opponent, n: int) -> tuple[int, int]:
     return player.n_won_battles - w0, player.n_finished_battles - p0
 
 
+def eval_teams(fmt: BattleFormat) -> list[str | None]:
+    """Four team slots for the match-ups; all None for random-battle formats."""
+    teams = fmt.training_teams()
+    return [teams[i % len(teams)] for i in range(4)] if teams else [None] * 4
+
+
 # ---------------------------------------------------------------------------
 # BC-only eval
 # ---------------------------------------------------------------------------
@@ -133,29 +135,30 @@ def evaluate_bc(args: argparse.Namespace) -> None:
     device = get_device()
     print(f"Device: {device}\n")
 
+    fmt = get_format(args.format)
     print("Loading BC checkpoint…")
-    bc_model = load_model(args.bc_checkpoint, device)
+    bc_model = load_model(args.bc_checkpoint, fmt, device)
     print()
 
     n     = args.n_battles
-    teams = ALL_TEAMS
+    teams = eval_teams(fmt)
 
     print(f"Running {n} battles per match-up  (greedy eval agent)\n")
     print(f"{'Match-up':<35} {'W/P':>7}  Win rate")
     print("-" * 55)
 
     # 1. BC vs Random
-    bc_v_rand = Gen1OUPlayer(model=bc_model, device=device, sample=False,
-                             username="EvalBC_1", team=teams[0])
-    rand_opp  = make_random_player("EvalBC_Rand", teams[1])
+    bc_v_rand = ProteanPlayer(model=bc_model, device=device, sample=False,
+                              username="EvalBC_1", team=teams[0], fmt=fmt)
+    rand_opp  = make_random_player("EvalBC_Rand", fmt, teams[1])
     w, p = run_and_measure(bc_v_rand, rand_opp, n)
     print(f"  {'BC vs Random':<33} {w:>3} / {p:<3}  {w/max(p,1):.1%}")
 
     # 2. BC vs itself
-    bc_a = Gen1OUPlayer(model=bc_model, device=device, sample=False,
-                        username="EvalBC_A", team=teams[1])
-    bc_b = Gen1OUPlayer(model=bc_model, device=device, sample=False,
-                        username="EvalBC_B", team=teams[2])
+    bc_a = ProteanPlayer(model=bc_model, device=device, sample=False,
+                         username="EvalBC_A", team=teams[1], fmt=fmt)
+    bc_b = ProteanPlayer(model=bc_model, device=device, sample=False,
+                         username="EvalBC_B", team=teams[2], fmt=fmt)
     w, p = run_and_measure(bc_a, bc_b, n)
     print(f"  {'BC vs BC (self)':<33} {w:>3} / {p:<3}  {w/max(p,1):.1%}")
 
@@ -170,38 +173,39 @@ def evaluate(args: argparse.Namespace) -> None:
     device = get_device()
     print(f"Device: {device}\n")
 
+    fmt = get_format(args.format)
     print("Loading checkpoints…")
-    eval_model = load_model(args.checkpoint, device)
-    bc_model   = load_model(args.bc_checkpoint, device)
+    eval_model = load_model(args.checkpoint, fmt, device)
+    bc_model   = load_model(args.bc_checkpoint, fmt, device)
     print()
 
     n     = args.n_battles
-    teams = ALL_TEAMS
+    teams = eval_teams(fmt)
 
     print(f"Running {n} battles per match-up  (greedy eval agent)\n")
     print(f"{'Match-up':<35} {'W/P':>7}  Win rate")
     print("-" * 55)
 
     # 1. PPO vs Random
-    eval_v_rand = Gen1OUPlayer(model=eval_model, device=device, sample=False,
-                               username="Eval_PPO_1", team=teams[0])
-    rand_opp    = make_random_player("Eval_Rand_1", teams[1])
+    eval_v_rand = ProteanPlayer(model=eval_model, device=device, sample=False,
+                                username="Eval_PPO_1", team=teams[0], fmt=fmt)
+    rand_opp    = make_random_player("Eval_Rand_1", fmt, teams[1])
     w, p = run_and_measure(eval_v_rand, rand_opp, n)
     print(f"  {'PPO vs Random':<33} {w:>3} / {p:<3}  {w/max(p,1):.1%}")
 
     # 2. PPO vs BC
-    eval_v_bc = Gen1OUPlayer(model=eval_model, device=device, sample=False,
-                             username="Eval_PPO_2", team=teams[0])
-    bc_opp    = Gen1OUPlayer(model=bc_model, device=device, sample=False,
-                             username="Eval_BC_1", team=teams[2])
+    eval_v_bc = ProteanPlayer(model=eval_model, device=device, sample=False,
+                              username="Eval_PPO_2", team=teams[0], fmt=fmt)
+    bc_opp    = ProteanPlayer(model=bc_model, device=device, sample=False,
+                              username="Eval_BC_1", team=teams[2], fmt=fmt)
     w, p = run_and_measure(eval_v_bc, bc_opp, n)
     print(f"  {'PPO vs BC policy':<33} {w:>3} / {p:<3}  {w/max(p,1):.1%}")
 
     # 3. PPO vs itself
-    eval_a = Gen1OUPlayer(model=eval_model, device=device, sample=False,
-                          username="Eval_PPO_A", team=teams[1])
-    eval_b = Gen1OUPlayer(model=eval_model, device=device, sample=False,
-                          username="Eval_PPO_B", team=teams[3])
+    eval_a = ProteanPlayer(model=eval_model, device=device, sample=False,
+                           username="Eval_PPO_A", team=teams[1], fmt=fmt)
+    eval_b = ProteanPlayer(model=eval_model, device=device, sample=False,
+                           username="Eval_PPO_B", team=teams[3], fmt=fmt)
     w, p = run_and_measure(eval_a, eval_b, n)
     print(f"  {'PPO vs PPO (self)':<33} {w:>3} / {p:<3}  {w/max(p,1):.1%}")
 
@@ -242,25 +246,26 @@ def sweep(args: argparse.Namespace) -> None:
     # Create a shared eval model — weights will be hot-swapped per checkpoint.
     # Players hold a reference to this model object, so swapping in-place
     # is immediately visible to all players without reconnecting.
-    eval_model = Gen1OUPolicy(vocab_size=get_tokenizer().vocab_size).to(device)
+    fmt = get_format(args.format)
+    eval_model = ProteanPolicy(**fmt.model_kwargs()).to(device)
     eval_model.eval()
 
     print("Loading BC checkpoint…")
-    bc_model = load_model(args.bc_checkpoint, device, verbose=True)
+    bc_model = load_model(args.bc_checkpoint, fmt, device, verbose=True)
     print()
 
     # Create players once — reused across all checkpoints.
     n     = args.n_battles
-    teams = ALL_TEAMS
+    teams = eval_teams(fmt)
 
-    eval_v_rand = Gen1OUPlayer(model=eval_model, device=device, sample=False,
-                               username="Sweep_PPO_R", team=teams[0])
-    rand_opp    = make_random_player("Sweep_Rand", teams[1])
+    eval_v_rand = ProteanPlayer(model=eval_model, device=device, sample=False,
+                                username="Sweep_PPO_R", team=teams[0], fmt=fmt)
+    rand_opp    = make_random_player("Sweep_Rand", fmt, teams[1])
 
-    eval_v_bc = Gen1OUPlayer(model=eval_model, device=device, sample=False,
-                             username="Sweep_PPO_B", team=teams[0])
-    bc_opp    = Gen1OUPlayer(model=bc_model, device=device, sample=False,
-                             username="Sweep_BC", team=teams[2])
+    eval_v_bc = ProteanPlayer(model=eval_model, device=device, sample=False,
+                              username="Sweep_PPO_B", team=teams[0], fmt=fmt)
+    bc_opp    = ProteanPlayer(model=bc_model, device=device, sample=False,
+                              username="Sweep_BC", team=teams[2], fmt=fmt)
 
     # Header
     print(f"{'Episode':>8}  {'vs Random':>10}  {'vs BC':>8}")
@@ -303,6 +308,7 @@ def parse_args() -> argparse.Namespace:
     mode.add_argument("--sweep", action="store_true",
                       help="Sweep all ppo_ep*.pt in --checkpoint-dir")
 
+    p.add_argument("--format",         type=str, default="gen1ou", choices=FORMAT_NAMES)
     p.add_argument("--bc-checkpoint",  type=str, required=True,
                    help="BC checkpoint (.pt); used as opponent for PPO modes, subject for --eval-bc")
     p.add_argument("--checkpoint-dir", type=str, default="checkpoints",
