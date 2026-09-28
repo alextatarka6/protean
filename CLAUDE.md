@@ -44,11 +44,20 @@ protean/
       vocab.py           # build_gen1ou_tokenizer(), get_tokenizer() (460 tokens)
       pokedex.py         # get_base_stats(species), get_types(species), get_move_data(move)
       teams.py           # 4 training teams + TEAM_STALL (eval only) + random_team() helper
+    gen9randombattle/
+      format.py          # Gen9RandomBattleFormat (88 numbers, 112 text tokens, 13 actions)
+      obs.py             # build_obs() from plain per-mon dicts — shared by live + future replay paths
+      battle.py          # live poke-env Battle → obs / mask / order (incl. tera)
+      dex.py             # dex + randbats set lookups; infer_opponent() fills hidden moves/ability/tera
+      vocab.py           # build_tokenizer() (2,220 tokens, <unk> = id 0)
   data/
     gen1ou_vocab.json    # Pre-built 460-token vocabulary
+    gen9randombattle_dex.json    # Exported from local Showdown by scripts/build_gen9rb_data.py
+    gen9randombattle_vocab.json  # Built from the dex export
 
 scripts/
   build_gen1ou_dataset.py   # Builds HF dataset from raw replays
+  build_gen9rb_data.py      # Exports gen9 dex + randbats sets from server/pokemon-showdown (needs node + built dist/)
   train_bc.py               # BC training loop (Phase 3 — complete)
   eval_bc.py                # BC evaluation: overall/move/switch accuracy + confusion matrix
   start_server.sh           # Start local Showdown server on port 8001
@@ -237,6 +246,14 @@ Format-specific code lives in `protean/formats/<format>/`; the model, player and
 - `train_bc.py` / `eval_bc.py` are tied to the gen1ou HF dataset schema
 - To add a format: implement `BattleFormat` in `protean/formats/<name>/format.py`, add it to `_REGISTRY` in `protean/formats/__init__.py`
 - Random-battle formats set `needs_team = False`; `training_teams()` returns `[]` and players get `team=None`
+
+### gen9randombattle (in progress — encoder done, no trained checkpoint yet)
+- **Actions (13)**: 0–3 move (alphabetical), 4–7 same move + terastallize (masked unless `battle.can_tera`), 8–12 switch to alive bench slot in team order (same order as `<switch>` obs entries)
+- **Struggle / recharge**: when no known move is selectable, slot 0 carries the forced move and tera slots are masked
+- **Own tera types** come from `battle.last_request` (poke-env 0.8.3.3 doesn't store them on `Pokemon`); `battle.can_tera` covers the active
+- **Side conditions**: poke-env values are layers for Spikes/Toxic Spikes but *start turns* for everything else — encode as presence except stackables
+- **Opponent inference**: `dex.infer_opponent()` narrows randbats sets by revealed moves/ability/tera and fills the rest (~77% precision on hidden moves); formes without their own entry fall back via `base_species`, cosmetic formes via `aliases`
+- **No BC data yet** — next step is heuristic-bot self-play data → BC (see plan)
 
 ---
 

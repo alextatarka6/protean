@@ -56,8 +56,9 @@ class BattleFormat(ABC):
     @abstractmethod
     def describe_action(self, idx: int, battle) -> Optional[tuple[str, str]]:
         """
-        (kind, value) for an action slot — ("move", move_id) or ("switch", species) —
-        or None if the slot is empty. Used for prev-move context and decision logs.
+        (kind, value) for an action slot — ("move", move_id), ("tera", move_id) for a
+        move + terastallize, or ("switch", species) — or None if the slot is empty.
+        Used for prev-move context and decision logs.
         """
 
     # ── Teams ────────────────────────────────────────────────────────────

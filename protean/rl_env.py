@@ -346,7 +346,7 @@ class ProteanPlayer(Player):
                 names.append(f"slot{i}")
             else:
                 kind, value = desc
-                names.append(f">{value}" if kind == "switch" else value)
+                names.append({"switch": f">{value}", "tera": f"{value}+tera"}.get(kind, value))
 
         valid = [(names[i], probs[i], i == chosen) for i in range(self.fmt.n_actions) if mask[i]]
         valid.sort(key=lambda x: -x[1])
