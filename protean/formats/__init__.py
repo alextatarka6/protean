@@ -17,7 +17,7 @@ from protean.formats.base import BattleFormat
 # Showdown format id → "module:ClassName"
 _REGISTRY: dict[str, str] = {
     "gen1ou":           "protean.formats.gen1ou.format:Gen1OUFormat",
-    "gen9randombattle": "protean.formats.gen9randombattle.format:Gen9RandomBattleFormat",
+    "gen9ou":           "protean.formats.gen9ou.format:Gen9OUFormat",
 }
 
 FORMAT_NAMES: list[str] = list(_REGISTRY)

@@ -27,3 +27,6 @@ server/pokemon-showdown/logs/
 .DS_Store
 .idea/
 .vscode/
+
+# BC shards converted from metamon parsed replays (scripts/build_gen9ou_bc_data.py)
+/data/

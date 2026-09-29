@@ -44,20 +44,24 @@ protean/
       vocab.py           # build_gen1ou_tokenizer(), get_tokenizer() (460 tokens)
       pokedex.py         # get_base_stats(species), get_types(species), get_move_data(move)
       teams.py           # 4 training teams + TEAM_STALL (eval only) + random_team() helper
-    gen9randombattle/
-      format.py          # Gen9RandomBattleFormat (88 numbers, 112 text tokens, 13 actions)
-      obs.py             # build_obs() from plain per-mon dicts — shared by live + future replay paths
-      battle.py          # live poke-env Battle → obs / mask / order (incl. tera)
-      dex.py             # dex + randbats set lookups; infer_opponent() fills hidden moves/ability/tera
-      vocab.py           # build_tokenizer() (2,220 tokens, <unk> = id 0)
+    gen9ou/
+      format.py          # Gen9OUFormat (55 numbers, 112 text tokens, 13 actions); team pools
+      universal.py       # port of metamon UniversalState.from_Battle + name cleaners → state dict
+      obs.py             # state_to_obs(state dict) — same code for dataset rows and live battles
+      battle.py          # live mask / order / describe (port of metamon action_idx_to_BattleOrder)
+      vocab.py           # build_tokenizer() (3,229 tokens, <unk> = id 0)
   data/
     gen1ou_vocab.json    # Pre-built 460-token vocabulary
-    gen9randombattle_dex.json    # Exported from local Showdown by scripts/build_gen9rb_data.py
-    gen9randombattle_vocab.json  # Built from the dex export
+    gen9_dex.json        # gen9 species/moves/items/abilities from local Showdown (scripts/build_gen9_dex.py)
+    gen9ou_vocab.json    # Built from gen9_dex.json + poke-env enums
+    gen9ou_teams.json    # 11 "competitive" + 2,000 "ladder" teams, validated (scripts/build_gen9ou_teams.py)
 
 scripts/
   build_gen1ou_dataset.py   # Builds HF dataset from raw replays
-  build_gen9rb_data.py      # Exports gen9 dex + randbats sets from server/pokemon-showdown (needs node + built dist/)
+  build_gen9_dex.py         # Exports gen9 dex names from server/pokemon-showdown (needs node + built dist/)
+  build_gen9ou_teams.py     # metamon-teams → server-validated gen9ou team pool
+  build_gen9ou_bc_data.py   # Streams metamon gen9ou parsed replays → pre-tokenised .npz shards in data/
+  train_bc_shards.py        # Format-generic BC from .npz shards (holdout acc by move/switch/tera)
   train_bc.py               # BC training loop (Phase 3 — complete)
   eval_bc.py                # BC evaluation: overall/move/switch accuracy + confusion matrix
   start_server.sh           # Start local Showdown server on port 8001
@@ -247,13 +251,14 @@ Format-specific code lives in `protean/formats/<format>/`; the model, player and
 - To add a format: implement `BattleFormat` in `protean/formats/<name>/format.py`, add it to `_REGISTRY` in `protean/formats/__init__.py`
 - Random-battle formats set `needs_team = False`; `training_teams()` returns `[]` and players get `team=None`
 
-### gen9randombattle (in progress — encoder done, no trained checkpoint yet)
-- **Actions (13)**: 0–3 move (alphabetical), 4–7 same move + terastallize (masked unless `battle.can_tera`), 8–12 switch to alive bench slot in team order (same order as `<switch>` obs entries)
-- **Struggle / recharge**: when no known move is selectable, slot 0 carries the forced move and tera slots are masked
-- **Own tera types** come from `battle.last_request` (poke-env 0.8.3.3 doesn't store them on `Pokemon`); `battle.can_tera` covers the active
-- **Side conditions**: poke-env values are layers for Spikes/Toxic Spikes but *start turns* for everything else — encode as presence except stackables
-- **Opponent inference**: `dex.infer_opponent()` narrows randbats sets by revealed moves/ability/tera and fills the rest (~77% precision on hidden moves); formes without their own entry fall back via `base_species`, cosmetic formes via `aliases`
-- **No BC data yet** — next step is heuristic-bot self-play data → BC (see plan)
+### gen9ou (in progress — encoder, data pipeline, BC trainer done)
+- **Data**: `jakegrigsby/metamon-parsed-replays` `gen9ou.tar.gz` (~20 GB, CC-BY-NC-4.0). One lz4 JSON per battle-POV: `{"states": [UniversalState dict], "actions": [int]}`; action `-1` = not revealed (~11%, skipped in BC). Filename carries rating (`Unrated` for tours) and WIN/LOSS
+- **Train/live parity**: live battles go through `universal.state_from_battle()` (metamon's `from_Battle` port) into the *same* `state_to_obs()` as dataset rows — never encode poke-env objects directly
+- **Actions (13) = metamon's indices**: 0–3 move, 4–8 switch, 9–12 move + tera. Moves and switches alphabetical by cleaned name (`consistent_move_order` / `consistent_pokemon_order`). Dataset labels are used as-is
+- **Metamon state is lossy**: only the opponent's *active* mon (plus team-preview species and `opponents_remaining`); side conditions / field keep only the most recent one. Don't add obs features the dataset can't supply
+- **Teams**: `fmt.get_team("competitive:<i>")` / `"ladder:<i>"`; `training_teams()` = ladder pool. Stored in export format — poke-env 0.8.3.3 `ConstantTeambuilder` crashes on *packed* teams
+- **Team preview**: `BattleFormat.teampreview()` → keeps team order (lead = slot 1); not learned yet
+- **Pipeline**: `build_gen9ou_bc_data.py` (~3k battles/s, streams from HF) → `train_bc_shards.py --format gen9ou` → `train_ppo.py --format gen9ou --bc-checkpoint checkpoints/gen9ou/bc_final.pt`
 
 ---
 

@@ -170,7 +170,7 @@ class ProteanPolicy(nn.Module):
         state:       torch.Tensor,
         action_mask: torch.Tensor | None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        logits = self.action_head(state)
+        logits = self.action_head(state).float()   # float32 so the -1e9 mask fits under fp16 autocast
         if action_mask is not None:
             logits = logits.masked_fill(~action_mask, -1e9)
         log_probs = F.log_softmax(logits, dim=-1)

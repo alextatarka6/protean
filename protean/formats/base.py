@@ -73,6 +73,10 @@ class BattleFormat(ABC):
             raise NotImplementedError(f"{self.name} does not define named teams")
         return None
 
+    def teampreview(self, battle) -> str:
+        """Team-preview choice for formats that have one. Default: keep team order (lead = slot 1)."""
+        return "/team " + "".join(str(i) for i in range(1, len(battle.team) + 1))
+
     # ── Model sizing ─────────────────────────────────────────────────────
 
     def model_kwargs(self) -> dict:

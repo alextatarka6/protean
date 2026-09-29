@@ -319,6 +319,9 @@ class ProteanPlayer(Player):
 
         return order
 
+    def teampreview(self, battle: Battle) -> str:
+        return self.fmt.teampreview(battle)
+
     def _battle_finished_callback(self, battle: Battle) -> None:
         """Called by poke-env when a battle ends."""
         battle_id  = battle.battle_tag
