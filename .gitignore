@@ -30,3 +30,6 @@ server/pokemon-showdown/logs/
 
 # BC shards converted from metamon parsed replays (scripts/build_gen9ou_bc_data.py)
 /data/
+ladder_logs/
+data/ladder_dataset.jsonl
+.live_repo/

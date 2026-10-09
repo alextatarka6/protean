@@ -73,30 +73,38 @@ obs_space    = Gen1OUObservationSpace()
 action_space = Gen1ActionSpace()
 
 
-def _row_to_samples(row: dict, tokenizer) -> list[tuple]:
+def _row_to_samples(row: dict, tokenizer, history_len: int = 1) -> list[tuple]:
     """
     Expand one dataset row into one sample per valid turn.
     Returns list of (token_ids, numbers, action_idx, action_mask).
+
+    history_len == 1: token_ids (T,), numbers (D,)  — single-turn (original BC).
+    history_len  > 1: token_ids (K,T), numbers (K,D) — the last K turns, left-padded
+    with zeros at the start of a battle, exactly like ProteanPlayer.choose_move.
     """
-    samples = []
     n_turns = row["num_turns"]
+    per_turn = []
+    for t in range(n_turns):
+        obs = obs_space.row_to_obs(row, t)
+        per_turn.append((tokenizer.tokenize(str(obs["text"])), obs["numbers"]))
+
+    samples = []
     for t in range(n_turns):
         action_idx = action_space.row_to_action_idx(row, t)
         if action_idx == -1:
             continue  # unmappable action, skip
-
-        obs  = obs_space.row_to_obs(row, t)
         mask = action_space.action_mask(row, t)
 
-        text = str(obs["text"])
-        token_ids = tokenizer.tokenize(text)   # np.int32 array, length 71
-
-        samples.append((
-            token_ids,
-            obs["numbers"],   # float32 (48,)
-            action_idx,
-            mask,             # bool (9,)
-        ))
+        if history_len == 1:
+            token_ids, numbers = per_turn[t]
+        else:
+            window = per_turn[max(0, t - history_len + 1): t + 1]
+            off = history_len - len(window)
+            token_ids = np.zeros((history_len, window[0][0].shape[0]), dtype=np.int32)
+            numbers   = np.zeros((history_len, window[0][1].shape[0]), dtype=np.float32)
+            for i, (tt, nn) in enumerate(window):
+                token_ids[off + i], numbers[off + i] = tt, nn
+        samples.append((token_ids, numbers, action_idx, mask))
     return samples
 
 
@@ -105,7 +113,7 @@ def _is_holdout(battle_id: str, holdout_pct: int = 10) -> bool:
     return zlib.crc32(battle_id.encode()) % 100 < holdout_pct
 
 
-def sample_stream(tokenizer, shuffle_buffer: int = 10_000) -> Iterator[tuple]:
+def sample_stream(tokenizer, shuffle_buffer: int = 10_000, history_len: int = 1) -> Iterator[tuple]:
     """
     Infinite iterator over (token_ids, numbers, action_idx, action_mask) tuples,
     cycling through the HF dataset with an in-memory shuffle buffer.
@@ -120,7 +128,7 @@ def sample_stream(tokenizer, shuffle_buffer: int = 10_000) -> Iterator[tuple]:
         for row in ds:
             if _is_holdout(row["battle_id"]):
                 continue
-            for sample in _row_to_samples(row, tokenizer):
+            for sample in _row_to_samples(row, tokenizer, history_len):
                 buffer.append(sample)
                 if len(buffer) >= shuffle_buffer:
                     idx = rng.integers(len(buffer))
@@ -137,11 +145,11 @@ def sample_stream(tokenizer, shuffle_buffer: int = 10_000) -> Iterator[tuple]:
 def make_batch(samples: list[tuple], device: torch.device) -> tuple:
     token_ids, numbers, action_idxs, masks = zip(*samples)
 
-    # Pad / stack token sequences (all should be length 71, but guard anyway)
-    max_len = max(t.shape[0] for t in token_ids)
-    token_arr = np.zeros((len(samples), max_len), dtype=np.int32)
+    # Pad / stack token sequences (last axis is T; history windows are (K, T))
+    max_len = max(t.shape[-1] for t in token_ids)
+    token_arr = np.zeros((len(samples), *token_ids[0].shape[:-1], max_len), dtype=np.int32)
     for i, t in enumerate(token_ids):
-        token_arr[i, :t.shape[0]] = t
+        token_arr[i, ..., :t.shape[-1]] = t
 
     tokens  = torch.from_numpy(token_arr).long().to(device)
     nums    = torch.from_numpy(np.stack(numbers)).float().to(device)
@@ -183,6 +191,9 @@ def train(args: argparse.Namespace) -> None:
     scheduler = CosineAnnealingLR(optimizer, T_max=args.max_steps, eta_min=args.lr * 0.1)
 
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    # Don't overwrite the single-turn BC checkpoints when training with history.
+    prefix = "bc" if args.history_len == 1 else f"bc_k{args.history_len}"
+    print(f"History window: {args.history_len} turn(s)  →  checkpoints/{prefix}_*.pt")
 
     # Resume from checkpoint if provided
     start_step = 0
@@ -200,7 +211,7 @@ def train(args: argparse.Namespace) -> None:
             start_step = ckpt["step"]
             print(f"Resumed from step {start_step}")
 
-    stream = sample_stream(tokenizer)
+    stream = sample_stream(tokenizer, history_len=args.history_len)
 
     step        = start_step
     batch_buf   = []
@@ -262,7 +273,7 @@ def train(args: argparse.Namespace) -> None:
             t0 = time.time()
 
         if step % CHECKPOINT_INTERVAL == 0:
-            ckpt_path = CHECKPOINT_DIR / f"bc_step{step:07d}.pt"
+            ckpt_path = CHECKPOINT_DIR / f"{prefix}_step{step:07d}.pt"
             torch.save({
                 "step":      step,
                 "model":     model.state_dict(),
@@ -273,7 +284,7 @@ def train(args: argparse.Namespace) -> None:
             print(f"  Saved checkpoint → {ckpt_path}")
 
     # Final checkpoint
-    final_path = CHECKPOINT_DIR / "bc_final.pt"
+    final_path = CHECKPOINT_DIR / f"{prefix}_final.pt"
     torch.save({
         "step":      step,
         "model":     model.state_dict(),
@@ -298,6 +309,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--seed",          type=int,   default=DEFAULTS["seed"])
     p.add_argument("--switch-weight",  type=float, default=2.0,
                    help="Loss weight for switch slots 4-8 (default: 2.0 — partial class-imbalance correction, biases toward moves in uncertain situations)")
+    p.add_argument("--history-len",   type=int,   default=1,
+                   help="Turns of observation history per sample (default 1 = original BC; use 10 "
+                        "to match ProteanPlayer / PPO). Saves checkpoints as bc_k<N>_*.pt")
     p.add_argument("--resume",        type=str,   default=None,
                    help="Path to a checkpoint to resume training from")
     p.add_argument("--finetune",      action="store_true",
