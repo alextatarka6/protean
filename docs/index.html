@@ -91,6 +91,57 @@
   .replay-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-top:16px;text-align:left;}
   .replay-grid a{background:var(--panel);border-radius:8px;padding:12px 14px;box-shadow:0 0 0 1px var(--border);text-decoration:none;color:var(--text);font-size:13px;display:block;}
 
+  /* ---- Live battle ---- */
+  .live-card{background:var(--panel);border-radius:10px;padding:18px;box-shadow:0 0 0 1px var(--border);margin-bottom:40px;}
+  .live-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:14px;font-size:13px;}
+  .live-head .who{display:flex;align-items:center;gap:8px;}
+  .live-dot{width:8px;height:8px;border-radius:50%;background:var(--muted-2);}
+  .live-dot.on{background:var(--loss);box-shadow:0 0 0 0 rgba(255,100,100,.6);animation:pulse 1.8s infinite;}
+  .live-dot.idle{background:var(--win);}
+  @keyframes pulse{70%{box-shadow:0 0 0 7px rgba(255,100,100,0);}100%{box-shadow:0 0 0 0 rgba(255,100,100,0);}}
+  .live-head .meta{color:var(--muted-2);font-size:12px;}
+  .arena{position:relative;aspect-ratio:16/9;min-height:250px;border-radius:8px;overflow:hidden;
+    background:linear-gradient(180deg,#1d2036 0%,#23273f 55%,#2b2f4a 55%,#232532 100%);box-shadow:inset 0 0 0 1px var(--border);}
+  .arena::before,.arena::after{content:"";position:absolute;border-radius:50%;background:rgba(0,0,0,.28);}
+  .arena::before{width:30%;height:9%;right:9%;top:36%;}
+  .arena::after{width:34%;height:10%;left:6%;bottom:6%;}
+  .arena .turn{position:absolute;left:50%;top:8px;transform:translateX(-50%);font-size:11px;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--accent-light);background:rgba(22,24,38,.7);padding:3px 10px;border-radius:999px;z-index:3;}
+  .arena img.spr{position:absolute;image-rendering:pixelated;z-index:2;}
+  .arena img.opp{right:13%;top:7%;height:34%;}
+  .arena img.us{left:11%;bottom:8%;height:44%;}
+  .arena .nofx{position:absolute;font-size:22px;font-weight:600;color:var(--muted);z-index:2;}
+  .infobox{position:absolute;z-index:3;background:rgba(22,24,38,.88);border-radius:8px;padding:8px 11px;min-width:150px;max-width:44%;box-shadow:0 0 0 1px var(--border);}
+  .infobox.opp{left:4%;top:12%;}
+  .infobox.us{right:4%;bottom:10%;}
+  .infobox .nm{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px;font-weight:600;margin-bottom:6px;}
+  .infobox .nm .st{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;padding:1px 6px;border-radius:4px;background:#423a6a;color:#f5f4ff;}
+  .hpbar{height:7px;border-radius:4px;background:rgba(233,233,237,.14);overflow:hidden;}
+  .hpbar > i{display:block;height:100%;border-radius:4px;transition:width .5s;}
+  .hptxt{margin-top:4px;font-size:11px;color:var(--muted-2);font-variant-numeric:tabular-nums;}
+  .team-rows{display:grid;grid-template-columns:auto 1fr;gap:8px 12px;align-items:center;margin-top:14px;font-size:12px;color:var(--muted-2);}
+  .pips{display:flex;gap:6px;}
+  .pip{width:30px;height:30px;border-radius:50%;background:var(--bg);box-shadow:0 0 0 1px var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative;}
+  .pip img{width:26px;height:26px;image-rendering:pixelated;object-fit:contain;}
+  .pip.fainted img{filter:grayscale(1);opacity:.35;}
+  .pip.fainted::after{content:"";position:absolute;inset:0;background:linear-gradient(135deg,transparent 46%,var(--loss) 47%,var(--loss) 53%,transparent 54%);}
+  .pip.unknown{border-style:dashed;}
+  .pip.active{box-shadow:0 0 0 2px var(--accent);}
+  .events{margin:14px 0 0;padding:0;list-style:none;font-size:12.5px;display:flex;flex-direction:column;gap:3px;}
+  .events li{color:var(--muted);padding-left:12px;position:relative;}
+  .events li::before{content:"";position:absolute;left:0;top:.5em;width:5px;height:5px;border-radius:50%;background:var(--muted-2);}
+  .events li.us::before{background:var(--accent);} .events li.opp::before{background:var(--loss);}
+  .events li:last-child{color:var(--text);}
+  .live-empty{padding:26px 10px;text-align:center;color:var(--muted);font-size:13.5px;}
+  .recent{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;font-size:12px;}
+  .recent .chip{padding:4px 10px;border-radius:999px;background:var(--bg);box-shadow:0 0 0 1px var(--border);color:var(--muted);}
+  .recent .chip b{font-weight:600;} .recent .chip.w b{color:var(--win);} .recent .chip.l b{color:var(--loss);}
+  @media (max-width:560px){
+    .arena{aspect-ratio:4/3;}
+    .infobox{min-width:0;padding:6px 8px;} .infobox .nm{font-size:12px;}
+    .pip{width:26px;height:26px;} .pip img{width:22px;height:22px;}
+  }
+
   footer{margin-top:40px;padding-top:20px;border-top:1px solid rgba(233,233,237,.12);display:flex;justify-content:space-between;font-size:12px;color:var(--muted-2);flex-wrap:wrap;gap:10px;}
   footer .foot-links{display:flex;gap:14px;}
   footer .foot-links a{color:inherit;text-decoration:none;}
@@ -118,6 +169,7 @@
     <div class="brand-sub">gen1ou · rl agent</div>
     <div class="navlinks">
       <a href="#top" class="active">Overview</a>
+      <a href="#live">Live</a>
       <a href="#pipeline">Pipeline</a>
       <a href="#model">Model</a>
       <a href="#results">Results</a>
@@ -151,6 +203,14 @@
       <div class="stat-tile"><div class="num">94%</div><div class="lbl">win rate vs frozen BC</div></div>
       <div class="stat-tile"><div class="num">25 / 56</div><div class="lbl">wins on the live ladder</div></div>
     </div>
+
+    <section id="live">
+      <div class="section-head">
+        <h2>Live battle</h2>
+        <span class="tag" id="liveTag">checking…</span>
+      </div>
+      <div class="live-card" id="liveCard"><div class="live-empty">Loading…</div></div>
+    </section>
 
     <section id="pipeline">
       <div class="section-head">
@@ -250,6 +310,129 @@
       grid.appendChild(a);
     });
   }
+
+  // ---- Live battle: bot pushes live.json to the live-data branch (protean/live.py) ----
+  (function liveBattle(){
+    const RAW = 'https://raw.githubusercontent.com/alextatarka6/protean/live-data/live.json';
+    const SRC = new URLSearchParams(location.search).get('live') || RAW;   // ?live=URL for testing
+    const SPRITE = 'https://play.pokemonshowdown.com/sprites/';
+    const STALE_MS = 4 * 60 * 1000, POLL_MS = 20000;
+    const NAMES = {mrmime:'Mr. Mime', farfetchd:"Farfetch'd", nidoranf:'Nidoran♀', nidoranm:'Nidoran♂'};
+    const pretty = id => NAMES[id] || (id ? id.charAt(0).toUpperCase() + id.slice(1) : '?');
+    const card = document.getElementById('liveCard'), tag = document.getElementById('liveTag');
+
+    function h(tagName, cls, text){
+      const e = document.createElement(tagName);
+      if (cls) e.className = cls;
+      if (text != null) e.textContent = text;      // textContent only: opponent names are untrusted
+      return e;
+    }
+    const hpColor = f => f > 0.5 ? 'var(--win)' : f > 0.2 ? 'oklch(80% 0.14 90)' : 'var(--loss)';
+    function sprite(kind, id, cls){
+      const img = h('img', cls); img.alt = pretty(id); img.loading = 'lazy';
+      img.src = SPRITE + kind + '/' + id + '.png';
+      img.onerror = () => { img.style.display = 'none'; };
+      return img;
+    }
+    function infobox(side, mon){
+      const box = h('div', 'infobox ' + side);
+      const nm = h('div', 'nm'); nm.appendChild(h('span', null, mon ? pretty(mon.s) : '—'));
+      if (mon && mon.st) nm.appendChild(h('span', 'st', mon.st));
+      box.appendChild(nm);
+      const f = mon ? mon.hp : 0;
+      const bar = h('div', 'hpbar'), fill = h('i'); fill.style.width = Math.round(f * 100) + '%'; fill.style.background = hpColor(f);
+      bar.appendChild(fill); box.appendChild(bar);
+      box.appendChild(h('div', 'hptxt', mon ? Math.round(f * 100) + '% HP' : ''));
+      return box;
+    }
+    function pips(team){
+      const row = h('div', 'pips');
+      team.forEach(m => {
+        const p = h('div', 'pip' + (!m ? ' unknown' : m.fainted ? ' fainted' : '') + (m && m.active ? ' active' : ''));
+        if (m){ p.title = pretty(m.s) + ' — ' + Math.round(m.hp * 100) + '%'; p.appendChild(sprite('gen1', m.s)); }
+        row.appendChild(p);
+      });
+      return row;
+    }
+    function ago(iso){
+      const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
+      return s < 90 ? 'just now' : s < 5400 ? Math.round(s / 60) + ' min ago' : Math.round(s / 3600) + ' h ago';
+    }
+    function recent(doc){
+      if (!doc.recent || !doc.recent.length) return null;
+      const r = h('div', 'recent'); r.appendChild(h('span', null, 'Recent:'));
+      doc.recent.forEach(g => {
+        const c = h('span', 'chip ' + (g.won ? 'w' : 'l'));
+        c.appendChild(h('b', null, g.won ? 'W' : 'L')); c.appendChild(document.createTextNode(' vs ' + g.opponent));
+        r.appendChild(c);
+      });
+      return r;
+    }
+    function battleView(doc, b){
+      const wrap = document.createDocumentFragment();
+      const head = h('div', 'live-head'), who = h('div', 'who');
+      who.appendChild(h('span', 'live-dot on'));
+      who.appendChild(h('span', null, (doc.bot || 'Protean') + ' vs ' + b.opponent));
+      const meta = h('div', 'meta', (b.rating ? 'Elo ' + b.rating + ' · ' : '') + (doc.checkpoint || ''));
+      const spec = h('a', null, 'Spectate ↗'); spec.href = 'https://play.pokemonshowdown.com/' + b.tag; spec.target = '_blank'; spec.rel = 'noopener';
+      meta.appendChild(document.createTextNode(' · ')); meta.appendChild(spec);
+      head.appendChild(who); head.appendChild(meta); wrap.appendChild(head);
+
+      const us = b.us.find(m => m.active && !m.fainted) || b.us.find(m => m.active);
+      const opp = b.opp.find(m => m && m.active && !m.fainted) || b.opp.find(m => m && m.active);
+      const arena = h('div', 'arena');
+      arena.appendChild(h('div', 'turn', 'Turn ' + b.turn));
+      if (opp) arena.appendChild(sprite('gen1', opp.s, 'spr opp'));
+      if (us) arena.appendChild(sprite('gen1-back', us.s, 'spr us'));
+      arena.appendChild(infobox('opp', opp)); arena.appendChild(infobox('us', us));
+      wrap.appendChild(arena);
+
+      const rows = h('div', 'team-rows');
+      rows.appendChild(h('span', null, 'Protean')); rows.appendChild(pips(b.us));
+      rows.appendChild(h('span', null, b.opponent)); rows.appendChild(pips(b.opp));
+      wrap.appendChild(rows);
+
+      const ev = h('ul', 'events');
+      (b.events || []).slice(-5).forEach(e => ev.appendChild(h('li', e.side, e.text)));
+      wrap.appendChild(ev);
+      const r = recent(doc); if (r) wrap.appendChild(r);
+      return wrap;
+    }
+    function idleView(doc, text, live){
+      const wrap = document.createDocumentFragment();
+      const e = h('div', 'live-empty');
+      e.appendChild(h('span', 'live-dot ' + (live ? 'idle' : ''))); e.appendChild(document.createTextNode('  ' + text));
+      wrap.appendChild(e);
+      const r = doc && recent(doc); if (r) wrap.appendChild(r);
+      return wrap;
+    }
+    function render(doc){
+      card.textContent = '';
+      if (!doc){ tag.textContent = 'offline'; card.appendChild(idleView(null, 'Live data isn’t available right now.', false)); return; }
+      const age = Date.now() - Date.parse(doc.updated_at);
+      if (!(age < STALE_MS)){
+        tag.textContent = 'offline';
+        card.appendChild(idleView(doc, 'The bot is offline — last seen ' + ago(doc.updated_at) + '.', false)); return;
+      }
+      if (doc.battles && doc.battles.length){
+        tag.textContent = 'in a battle';
+        card.appendChild(battleView(doc, doc.battles[0]));
+      } else {
+        tag.textContent = 'on the ladder';
+        card.appendChild(idleView(doc, doc.searching ? 'Searching for an opponent…' : 'Between games.', true));
+      }
+    }
+    async function poll(){
+      if (document.hidden) return;
+      try {
+        const res = await fetch(SRC + (SRC.includes('?') ? '&' : '?') + 't=' + Date.now(), {cache: 'no-store'});
+        if (!res.ok) throw new Error(res.status);
+        render(JSON.parse(await res.text()));
+      } catch (err) { render(null); }
+    }
+    poll(); setInterval(poll, POLL_MS);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
+  })();
 
   // ---- Pipeline steps ----
   const pipeline = [
